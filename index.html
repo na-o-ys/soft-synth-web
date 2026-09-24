@@ -8,75 +8,114 @@
   <script type="module" src="src/main.js"></script>
 </head>
 <body>
-  <header>
-    <h1>Soft Synth</h1>
-    <button id="start" class="primary">Start sound</button>
-    <span id="audio-status" class="pill">Stopped</span>
-  </header>
+  <div class="synth" id="synth">
+    <!-- top strip: power, program display, knob page, utility buttons -->
+    <header class="strip">
+      <div class="brand">SOFT<span>SYNTH</span></div>
+      <button id="start" class="power" type="button"><span class="led" id="audio-led"></span><span id="start-label">Start</span></button>
+      <span id="audio-status" class="strip-note">audio off</span>
+      <button id="mode-toggle" class="mode-toggle" type="button" title="Switch between editing sounds and playing them">Play</button>
 
-  <main>
-    <section class="card" id="devices">
-      <h2>MIDI input</h2>
-      <ul id="midi-inputs" class="list"><li class="muted">Press “Start sound” to look for MIDI keyboards</li></ul>
-      <div class="row">
-        <button id="ble-connect">Connect Bluetooth MIDI keyboard</button>
-        <span id="ble-status" class="muted"></span>
+      <div class="program edit-only">
+        <button id="preset-prev" type="button" aria-label="Previous preset">◀</button>
+        <div class="lcd program-lcd">
+          <span id="preset-number" class="lcd-dim"></span>
+          <select id="preset-select" aria-label="Preset"></select>
+        </div>
+        <button id="preset-next" type="button" aria-label="Next preset">▶</button>
+        <button id="new-preset" type="button" title="Start a new sound from the init patch (plain saw, filter open, no effects). Nothing is saved until you Write.">New</button>
+        <button id="save-preset" type="button" title="Save the current sound: keep the name to overwrite this preset, or enter a new name to save a copy">Write</button>
+        <button id="revert-preset" type="button" title="Throw away edits and reload this preset">Revert</button>
+        <button id="undo" type="button" title="Undo the last change (⌘Z / Ctrl+Z)">Undo</button>
       </div>
-      <p class="hint">You can also play with the computer keyboard: A W S E D F T G Y H U J K = C to C, Z / X = octave down / up.</p>
-    </section>
 
-    <section class="card" id="presets-card">
-      <h2>Presets</h2>
-      <div id="presets" class="buttons"></div>
-      <div class="row spaced">
-        <button id="save-preset">Save to preset</button>
-        <button id="revert-preset">Revert</button>
-        <button id="panic" class="ghost">All notes off</button>
+      <div class="pages edit-only" id="pages-box" hidden>
+        <span class="strip-note">knobs</span>
+        <div id="pages" class="switch"></div>
       </div>
-      <p class="hint">Edits to the sound stay until you switch presets. “Save to preset” writes them into the config.</p>
+
+      <button id="lessons-toggle" class="lessons-toggle edit-only" type="button" title="Hands-on sound design lessons">Lessons</button>
+      <span class="led midi-led" id="midi-led" title="MIDI in"></span>
+      <button id="panic" type="button" title="Stop every sounding note">Panic</button>
+    </header>
+
+    <!-- displays -->
+    <div class="displays">
+      <figure class="lcd screen"><figcaption>scope</figcaption><canvas id="scope"></canvas></figure>
+      <figure class="lcd screen"><figcaption>spectrum</figcaption><canvas id="spectrum"></canvas></figure>
+      <figure class="lcd screen edit-only"><figcaption>wave (C4, filtered)</figcaption><canvas id="waveform"></canvas></figure>
+      <figure class="lcd screen edit-only"><figcaption>filter</figcaption><canvas id="filter"></canvas></figure>
+      <figure class="lcd screen edit-only"><figcaption>envelopes</figcaption><canvas id="envelope"></canvas></figure>
+    </div>
+
+    <!-- the Play screen: several sounds at once on keys, pads, and knobs -->
+    <div class="play" id="play"></div>
+
+    <!-- modules in signal order -->
+    <div class="modules edit-only" id="row-1"></div>
+    <div class="modules edit-only" id="row-2"></div>
+
+    <section class="module additive-module edit-only">
+      <h3 tabindex="0" title="The recipe OSC 1 plays when its wave is set to harmonics: each column is a sine at RATIO × the note, with its level on the drawbar. VEL adds level when you play harder; DECAY fades that harmonic on its own.">ADDITIVE · OSC 1 harmonics</h3>
+      <div class="additive" id="additive"></div>
     </section>
 
-    <section class="card wide" id="pages-card" hidden>
-      <h2>Knob page</h2>
-      <div id="pages" class="buttons"></div>
-      <ul id="page-controls" class="mapping"></ul>
-    </section>
+    <aside class="lessons" id="lessons" aria-label="Lessons" hidden>
+      <header class="lessons-head">
+        <h2>Lessons</h2>
+        <button class="lessons-close" type="button" aria-label="Close lessons">✕</button>
+      </header>
+      <div class="lessons-body"></div>
+    </aside>
 
-    <section class="card wide">
-      <h2>Parameters</h2>
-      <div id="params" class="params"></div>
-    </section>
+    <div class="keyboard-row">
+      <div class="keyboard" id="keyboard" aria-label="On-screen keyboard"></div>
+      <p class="strip-note">Also playable from the computer keyboard: A W S E D F T G Y H U J K, Z / X = octave. Drag knobs up / down, or use the wheel or arrow keys (hold Shift for fine steps); double-click to reset. Hover a module title for what it does.</p>
+    </div>
+  </div>
 
-    <section class="card wide">
-      <h2>Harmonics</h2>
-      <div id="partials" class="partials"></div>
-      <p class="hint">Each row is a sine wave at <em>ratio</em> × the note’s frequency. <em>velocity</em> adds level when you play harder; <em>decay</em> fades that harmonic on its own (0 = no fade). Raising the level of an unused row adds it.</p>
-    </section>
+  <details class="setup">
+    <summary>Setup · MIDI, config, log</summary>
+    <main>
+      <section class="card" id="devices">
+        <h2>MIDI input</h2>
+        <ul id="midi-inputs" class="list"><li class="muted">Press “Start” to look for MIDI keyboards</li></ul>
+        <div class="row">
+          <button id="ble-connect" type="button">Connect Bluetooth MIDI keyboard</button>
+          <span id="ble-status" class="muted"></span>
+        </div>
+      </section>
 
-    <section class="card wide" id="config-card">
-      <h2>Config (JSON)</h2>
-      <div class="row">
-        <label>Template
-          <select id="config-template">
-            <option value="configs/default.json">Generic MIDI keyboard</option>
-            <option value="configs/smk25ii.json">M-VAVE SMK-25 II</option>
-          </select>
-        </label>
-        <button id="config-load">Load template</button>
-        <button id="config-apply" class="primary">Apply and save</button>
-      </div>
-      <textarea id="config-text" spellcheck="false" rows="18"></textarea>
-      <p id="config-error" class="error" hidden></p>
-      <p class="hint">Same format as the native soft-synth, plus knob pages, pickup, and harmonic parameters. Saved in this browser.</p>
-    </section>
+      <section class="card" id="mapping-card">
+        <h2>Hardware knobs on this page</h2>
+        <ul id="page-controls" class="mapping"><li class="muted">This config has no knob pages.</li></ul>
+      </section>
 
-    <section class="card wide">
-      <h2>Log</h2>
-      <div class="row">
-        <label><input type="checkbox" id="monitor"> Also show incoming MIDI messages (for building mappings)</label>
-      </div>
-      <pre id="log" class="log"></pre>
-    </section>
-  </main>
+      <section class="card wide" id="config-card">
+        <h2>Config (JSON)</h2>
+        <div class="row">
+          <label>Template
+            <select id="config-template">
+              <option value="configs/default.json">Generic MIDI keyboard</option>
+              <option value="configs/smk25ii.json">M-VAVE SMK-25 II</option>
+            </select>
+          </label>
+          <button id="config-load" type="button">Load template</button>
+          <button id="config-apply" type="button" class="primary">Apply and save</button>
+        </div>
+        <textarea id="config-text" spellcheck="false" rows="18"></textarea>
+        <p id="config-error" class="error" hidden></p>
+        <p class="hint">Same format as the native soft-synth, plus knob pages, pickup, and the synth parameters. Saved in this browser.</p>
+      </section>
+
+      <section class="card wide">
+        <h2>Log</h2>
+        <div class="row">
+          <label><input type="checkbox" id="monitor"> Also show incoming MIDI messages (for building mappings)</label>
+        </div>
+        <pre id="log" class="log"></pre>
+      </section>
+    </main>
+  </details>
 </body>
 </html>

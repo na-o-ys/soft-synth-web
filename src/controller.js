@@ -1,6 +1,7 @@
 // Turns incoming MIDI messages into parameter changes, actions, and notes according to the config's controls.
 import {
-  BUILTIN, DEFAULT_PARAMS, DEFAULT_PARTIALS, PARAMS, PERFORMANCE, newPartial, partialParam,
+  BUILTIN, CHOICES, DEFAULT_PARAMS, DEFAULT_PARTIALS, INIT_PARAMS, INIT_PARTIALS, PARAMS, PERFORMANCE,
+  newPartial, partialParam,
 } from './config.js';
 
 const round = (v) => Number(v.toFixed(4));
@@ -12,9 +13,11 @@ export class Controller {
    * @param {(line: string) => void} hooks.log
    * @param {() => void} hooks.onChange          parameters, preset, or page changed (for the UI)
    * @param {(index: number, preset: object) => void} hooks.onSavePreset  a preset was overwritten (JSON form)
+   * @param {import('./recorder.js').Recorder} [hooks.recorder]  records what is played, for the record / play actions
    */
-  constructor({ send, log, onChange, onSavePreset }) {
+  constructor({ send, log, onChange, onSavePreset, recorder = null }) {
     this.send = send;
+    this.recorder = recorder;
     this.log = log;
     this.onChange = onChange;
     this.onSavePreset = onSavePreset;
@@ -22,8 +25,11 @@ export class Controller {
     this.params = { ...DEFAULT_PARAMS };
     this.partials = DEFAULT_PARTIALS;
     this.presetIndex = 0;
+    this.edited = false; // the sound differs from the saved preset
     this.page = null;
     this.pickupState = new Map(); // control → { lastIn, lastSent } for soft takeover
+    this.history = [];            // earlier sounds, newest last, for undo
+    this.lastEdit = { key: null, time: 0 };
   }
 
   get presetName() {
@@ -39,6 +45,7 @@ export class Controller {
     // on reload, stay on the preset with the same name if it still exists
     const name = config.presets.some((p) => p.name === current) ? current : config.initialPreset;
     this.selectPreset(Math.max(0, config.presets.findIndex((p) => p.name === name)));
+    this.history = [];
   }
 
   /** Sends the whole state to the synth again (e.g. right after audio starts). */
@@ -91,10 +98,16 @@ export class Controller {
     if (matched) return;
 
     // messages without a mapping are treated as standard MIDI
-    if (kind === 0x90 && d2 > 0) this.send({ type: 'noteOn', key: d1, velocity: d2 });
-    else if (kind === 0x90 || kind === 0x80) this.send({ type: 'noteOff', key: d1 });
-    else if (kind === 0xb0 && d1 === 64) this.send({ type: 'sustain', down: d2 >= 64 });
+    if (kind === 0x90 && d2 > 0) this.play({ type: 'noteOn', key: d1, velocity: d2 });
+    else if (kind === 0x90 || kind === 0x80) this.play({ type: 'noteOff', key: d1 });
+    else if (kind === 0xb0 && d1 === 64) this.play({ type: 'sustain', down: d2 >= 64 });
     else if (kind === 0xb0 && (d1 === 120 || d1 === 123)) this.send({ type: 'allNotesOff' });
+  }
+
+  /** A note or pedal message played live: to the synth, and into the recording if one is running. */
+  play(msg) {
+    this.send(msg);
+    this.recorder?.capture(msg);
   }
 
   apply(control, value, pressed) {
@@ -112,10 +125,17 @@ export class Controller {
         if (pressed) this.selectPreset((this.presetIndex + 1) % presets.length);
         break;
       case 'prevPreset':
-        if (pressed) this.selectPreset((this.presetIndex + presets.length - 1) % presets.length);
+        if (pressed) this.selectPreset(((this.presetIndex < 0 ? 0 : this.presetIndex) + presets.length - 1) % presets.length);
         break;
       case 'page':
         if (pressed) this.selectPage(t.page);
+        break;
+      case 'pageKnob':
+        // a knob choosing the page by its position: the range is split evenly between the pages
+        if (pages.length > 0) this.selectPage(pages[Math.min(pages.length - 1, Math.floor(value * pages.length))]);
+        break;
+      case 'undo':
+        if (pressed) this.undo();
         break;
       case 'nextPage':
       case 'prevPage':
@@ -139,25 +159,52 @@ export class Controller {
       case 'panic':
         if (pressed) this.panic();
         break;
+      case 'record':
+        if (pressed) this.recorder?.record();
+        break;
+      case 'play':
+        if (pressed) this.recorder?.play();
+        break;
+      case 'stop':
+        if (pressed) this.recorder?.stop();
+        break;
+      case 'loop':
+        if (pressed) this.recorder?.toggleLoop();
+        break;
+      case 'slot':
+        // preset slots are filled in on the Play screen and only work there
+        if (pressed) this.log(`slot ${t.slot}: preset slots work on the Play screen`);
+        break;
     }
   }
 
   applyParam(control, value) {
     const t = control.target;
     if (t.pickup) {
-      // Soft takeover: after a preset or page change the knob's physical position no longer
-      // matches the value, so ignore it until it reaches (or crosses) the current value.
+      // Soft takeover by value scaling: after a preset or page change the knob's physical position no
+      // longer matches the value. Until they meet, turning the knob moves the value in the same
+      // direction, scaled so both reach the end of their range together; once they meet, the knob
+      // drives the value directly. No jumps, and the knob always responds.
       const st = this.pickupState.get(control) ?? {};
       this.pickupState.set(control, st);
       const current = this.getParam(t.param);
-      let engaged = st.lastSent === current; // this control set the value last, so it is in sync
-      if (!engaged) {
-        const pos = Math.min(Math.max(normalize(t, current), 0), 1);
-        engaged = Math.abs(value - pos) < 0.03 || (st.lastIn !== undefined && (st.lastIn - pos) * (value - pos) <= 0);
+      // something else (a preset, the screen, another control) changed the value: catch up again
+      if (st.lastSent !== current) st.synced = false;
+      const pos = Math.min(Math.max(normalize(t, current), 0), 1);
+      let target = value;
+      if (!st.synced && Math.abs(value - pos) < 0.02) st.synced = true;
+      if (!st.synced) {
+        const last = st.lastIn;
+        st.lastIn = value;
+        if (last === undefined || value === last) return; // need one movement to know the direction
+        target = value > last
+          ? pos + ((value - last) * (1 - pos)) / Math.max(1 - last, 1e-6)
+          : pos - ((last - value) * pos) / Math.max(last, 1e-6);
+        target = Math.min(Math.max(target, 0), 1);
+        if (Math.abs(target - value) < 0.02) st.synced = true;
       }
       st.lastIn = value;
-      if (!engaged) return;
-      this.setParam(t.param, denormalize(t, value), t.step > 0);
+      this.setParam(t.param, denormalize(t, target), t.step > 0);
       st.lastSent = this.getParam(t.param);
       return;
     }
@@ -173,6 +220,7 @@ export class Controller {
   setParam(name, v, announce = false) {
     v += 0; // turn -0 into 0
     if (this.getParam(name) === v) return;
+    if (!PERFORMANCE.has(name)) this.remember(name);
     const pp = partialParam(name);
     if (pp) {
       // editing a partial the preset does not have yet adds silent harmonics up to it
@@ -183,6 +231,7 @@ export class Controller {
     } else {
       this.params[name] = v;
     }
+    if (!PERFORMANCE.has(name)) this.edited = true; // performance state is never saved into a preset
     this.sync();
     if (announce) this.log(`${name} = ${round(v)}`);
     this.onChange();
@@ -190,6 +239,7 @@ export class Controller {
 
   selectPreset(i) {
     if (i < 0) return;
+    this.remember(null);
     this.presetIndex = i;
     const preset = this.config.presets[i];
     // sound parameters come from defaults ← params ← preset; performance state carries over
@@ -197,6 +247,7 @@ export class Controller {
     for (const p of PARAMS) if (PERFORMANCE.has(p)) next[p] = this.params[p];
     this.params = next;
     this.partials = preset.partials ?? DEFAULT_PARTIALS;
+    this.edited = false;
     this.sync();
     this.log(`preset: ${preset.name}`);
     this.onChange();
@@ -209,12 +260,71 @@ export class Controller {
     this.onChange();
   }
 
-  /** Writes the current sound into the current preset (the UI turns it back into config JSON). */
-  savePreset() {
+  /**
+   * Loads the init patch without adding it anywhere: presetIndex becomes -1 ("unsaved") until
+   * savePreset() gives it a name.
+   */
+  newPatch() {
+    this.remember(null);
+    const next = { ...INIT_PARAMS };
+    for (const p of PARAMS) if (PERFORMANCE.has(p)) next[p] = this.params[p];
+    this.params = next;
+    this.partials = INIT_PARTIALS;
+    this.presetIndex = -1;
+    this.edited = false;
+    this.sync();
+    this.log('init patch (not saved; Write to keep it)');
+    this.onChange();
+  }
+
+  /**
+   * Sets several values at once as one undo step (used by the lessons). values: { param: number }.
+   * With init, it first resets everything to the init patch, including the performance state
+   * except volume (transpose, bend, mod), so the result is the same whatever came before.
+   */
+  loadSound(values, { init = false } = {}) {
+    this.remember(null);
+    this.batching = true;
+    try {
+      if (init) {
+        const next = { ...INIT_PARAMS, volume: this.params.volume };
+        this.params = next;
+        this.partials = INIT_PARTIALS;
+        this.presetIndex = -1;
+      }
+      for (const [name, v] of Object.entries(values)) this.setParam(name, v);
+    } finally {
+      this.batching = false;
+    }
+    this.edited = this.presetIndex >= 0 || Object.keys(values).length > 0;
+    this.sync();
+    this.onChange();
+  }
+
+  /**
+   * Writes the current sound into the preset called `name` (the UI turns it back into config JSON):
+   * the current preset by default, a new preset if no preset has that name yet.
+   * An unsaved init patch without a name gets a unique "init" name.
+   */
+  savePreset(name) {
+    if (name === undefined) {
+      name = this.presetName;
+      const names = new Set(this.config.presets.map((p) => p.name));
+      if (name === undefined) {
+        name = 'init';
+        for (let i = 2; names.has(name); i++) name = `init-${i}`;
+      }
+    }
+    let index = this.config.presets.findIndex((p) => p.name === name);
+    if (index < 0) index = this.config.presets.length;
+
     const base = { ...DEFAULT_PARAMS, ...this.config.params };
     const values = {};
+    const json = {}; // the same values as the config file writes them: choices by name ("saw")
     for (const p of PARAMS) {
-      if (!PERFORMANCE.has(p) && this.params[p] !== base[p]) values[p] = round(this.params[p]);
+      if (PERFORMANCE.has(p) || this.params[p] === base[p]) continue;
+      values[p] = round(this.params[p]); // the synth needs numbers (the wave's index)
+      json[p] = CHOICES[p] ? CHOICES[p][Math.round(this.params[p])] : values[p];
     }
     // drop trailing partials that are silent (e.g. added by turning a knob and back)
     const partials = this.partials.map((p) => ({
@@ -222,12 +332,89 @@ export class Controller {
     }));
     while (partials.length > 1 && partials.at(-1).level === 0 && partials.at(-1).velocity === 0) partials.pop();
 
-    const name = this.presetName;
     const presets = [...this.config.presets];
-    presets[this.presetIndex] = { name, values, partials };
+    presets[index] = { name, values, partials };
     this.config = { ...this.config, presets };
-    this.onSavePreset(this.presetIndex, { name, ...values, partials: partials.map(compactPartial) });
+    this.presetIndex = index;
+    this.edited = false;
+    this.onSavePreset(index, { name, ...json, partials: partials.map(compactPartial) });
     this.log(`saved preset: ${name}`);
+    this.onChange();
+  }
+
+  /**
+   * Saves the current sound for undo before it changes. Continuous changes to the same control
+   * (a knob being turned) within a second count as one step; key = null always starts a new step.
+   */
+  remember(key) {
+    if (this.batching) return; // a batch (loadSound) is one undo step, remembered once up front
+    const now = Date.now();
+    const same = key !== null && key === this.lastEdit.key && now - this.lastEdit.time < 1000;
+    this.lastEdit = { key, time: now };
+    if (same) return;
+    this.history.push({ presetIndex: this.presetIndex, params: { ...this.params }, partials: this.partials, edited: this.edited });
+    if (this.history.length > 100) this.history.shift();
+  }
+
+  /** Goes back one step: a knob gesture, a preset change, or New. Performance state (volume etc.) stays. */
+  undo() {
+    const prev = this.history.pop();
+    if (!prev) {
+      this.log('nothing to undo');
+      return;
+    }
+    const params = { ...prev.params };
+    for (const p of PERFORMANCE) params[p] = this.params[p];
+    this.presetIndex = prev.presetIndex;
+    this.params = params;
+    this.partials = prev.partials;
+    this.edited = prev.edited;
+    this.lastEdit = { key: null, time: 0 };
+    this.sync();
+    this.log(`undo → ${this.presetName ?? 'init patch'}${this.edited ? ' (edited)' : ''}`);
+    this.onChange();
+  }
+
+  /** The working state, for keeping unsaved edits across a page reload. */
+  snapshot() {
+    return {
+      preset: this.presetIndex < 0 ? null : this.presetName, // null = unsaved init patch
+      edited: this.edited,
+      params: this.params,
+      partials: this.partials,
+      page: this.page,
+    };
+  }
+
+  /**
+   * Puts back a snapshot taken before a reload, on top of the loaded config. Returns false (and changes
+   * nothing) if it no longer fits: its preset was removed, or the stored data is damaged.
+   */
+  restore(state) {
+    if (!state || typeof state !== 'object') return false;
+    const index = state.preset === null ? -1 : this.config.presets.findIndex((p) => p.name === state.preset);
+    if (state.preset !== null && index < 0) return false;
+    const params = { ...DEFAULT_PARAMS };
+    for (const p of PARAMS) {
+      const v = state.params?.[p];
+      if (typeof v === 'number' && Number.isFinite(v)) params[p] = v;
+    }
+    const partials = Array.isArray(state.partials) ? state.partials.slice(0, 8).map((q) => ({
+      ratio: Number(q?.ratio) || 1, level: Number(q?.level) || 0,
+      velocity: Number(q?.velocity) || 0, decay: Number(q?.decay) || 0,
+    })) : [];
+    if (partials.length === 0) return false;
+    params.modWheel = 0; // the mod wheel is released on reload, like the physical strip
+    this.presetIndex = index;
+    this.params = params;
+    this.partials = partials;
+    this.edited = state.edited === true;
+    if (this.config.pages.includes(state.page)) this.page = state.page;
+    this.pickupState.clear();
+    this.history = [];
+    this.sync();
+    this.onChange();
+    return true;
   }
 
   panic() {

@@ -101,16 +101,25 @@
         {"ratio": 3, "level": 0.1, "decay": 0.6},
         {"ratio": 4.2, "level": 0.06, "velocity": 0.04, "decay": 0.3}
       ]
-    }
+    },
+    {"name": "analog-pad", "osc1Wave": "saw", "osc2Wave": "saw", "osc2Level": 1, "osc2Detune": 8, "chorus": 0, "cutoff": 900, "resonance": 0.15, "keyTrack": 0.5, "filterEnv": 1.5, "fAttack": 0.8, "fDecay": 2, "fSustain": 0.5, "fRelease": 1.2, "attack": 0.5, "decay": 3, "sustain": 0.85, "release": 1.5, "velocity": 0.4, "vibratoRate": 0.4, "lfoFilter": 0.3, "reverb": 0.35, "reverbSize": 0.88},
+    {"name": "synth-brass", "osc1Wave": "saw", "osc2Wave": "saw", "osc2Level": 0.8, "osc2Detune": 6, "chorus": 0, "cutoff": 350, "resonance": 0.1, "keyTrack": 0.6, "filterEnv": 3.5, "fAttack": 0.06, "fDecay": 0.7, "fSustain": 0.45, "fRelease": 0.3, "attack": 0.03, "decay": 1.5, "sustain": 0.8, "release": 0.25, "velocity": 0.6, "velFilter": 1.5},
+    {"name": "soft-bass", "osc1Wave": "triangle", "osc2Wave": "square", "osc2Level": 0.5, "osc2Octave": -1, "chorus": 0, "cutoff": 500, "resonance": 0.2, "keyTrack": 0.3, "filterEnv": 2, "fAttack": 0.003, "fDecay": 0.25, "fSustain": 0.2, "fRelease": 0.2, "attack": 0.005, "decay": 0.8, "sustain": 0.7, "release": 0.15, "reverb": 0.1, "velFilter": 1},
+    {"name": "pluck", "osc1Wave": "saw", "osc2Wave": "pulse", "osc2Level": 0.5, "pulseWidth": 0.3, "chorus": 0.2, "cutoff": 250, "resonance": 0.3, "keyTrack": 0.8, "filterEnv": 5, "fAttack": 0.001, "fDecay": 0.18, "fSustain": 0, "fRelease": 0.15, "attack": 0.002, "decay": 0.5, "sustain": 0, "release": 0.3, "reverb": 0.3, "velFilter": 1.2, "delay": 0.3, "delayTime": 0.375, "delayFeedback": 0.4},
+    {"name": "mono-lead", "mono": "mono", "glide": 0.08, "osc1Wave": "saw", "osc2Wave": "square", "osc2Level": 0.5, "osc2Detune": 7, "chorus": 0, "cutoff": 700, "resonance": 0.25, "keyTrack": 0.5, "velFilter": 1.5, "filterEnv": 2.5, "fAttack": 0.01, "fDecay": 0.4, "fSustain": 0.4, "attack": 0.005, "decay": 1, "sustain": 0.9, "release": 0.15, "vibratoRate": 5.5, "delay": 0.25, "delayTime": 0.3, "delayFeedback": 0.3, "reverb": 0.2},
+    {"name": "super-pad", "osc1Wave": "saw", "osc2Wave": "saw", "osc2Level": 0.7, "osc2Octave": 1, "unison": 5, "unisonDetune": 25, "unisonWidth": 0.9, "chorus": 0, "cutoff": 1500, "resonance": 0.1, "keyTrack": 0.4, "filterEnv": 1, "fAttack": 1, "fDecay": 2, "fSustain": 0.6, "fRelease": 1.5, "attack": 0.6, "decay": 3, "sustain": 0.9, "release": 2, "velocity": 0.3, "delay": 0.2, "delayTime": 0.45, "delayFeedback": 0.4, "reverb": 0.4, "reverbSize": 0.9},
+    {"name": "pwm-strings", "osc1Wave": "pulse", "osc2Wave": "pulse", "osc2Level": 0.8, "osc2Detune": 5, "pulseWidth": 0.5, "lfoWave": "triangle", "vibratoRate": 0.7, "lfoPwm": 0.35, "chorus": 0, "cutoff": 2500, "keyTrack": 0.5, "velFilter": 1, "attack": 0.35, "decay": 2, "sustain": 0.85, "release": 0.8, "velocity": 0.5, "reverb": 0.35}
   ],
   "controls": [
     {"pitchBend": true, "param": "bend", "min": -2, "max": 2},
-    {"cc": 1, "param": "vibrato", "min": 0, "max": 0.4},
+    {"cc": 1, "param": "modWheel", "min": 0, "max": 0.5},
     {"cc": 7, "param": "volume", "min": 0, "max": 1},
+    {"cc": 74, "param": "cutoff", "min": 100, "max": 20000, "curve": "exp"},
+    {"cc": 71, "param": "resonance", "min": 0, "max": 0.9},
     {"cc": 72, "param": "release", "min": 0.05, "max": 4, "curve": "exp"},
     {"cc": 73, "param": "attack", "min": 0.002, "max": 1.5, "curve": "exp"},
-    {"cc": 74, "param": "brightness", "min": 0, "max": 2},
     {"cc": 91, "param": "reverb", "min": 0, "max": 0.6},
-    {"cc": 93, "param": "chorus", "min": 0, "max": 1}
+    {"cc": 93, "param": "chorus", "min": 0, "max": 1},
+    {"cc": 5, "param": "glide", "min": 0, "max": 1}
   ]
 }

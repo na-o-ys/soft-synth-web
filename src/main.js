@@ -1,36 +1,20 @@
-// Wires the page together: audio start, MIDI input, config editing and saving, parameter display and control.
-import { BUILTIN, MAX_PARTIALS, PARAMS, PARTIAL_FIELDS, formatConfig, parseConfig } from './config.js';
+// Wires the page together: audio start, MIDI input, the instrument panel, config editing and saving.
+import {
+  BUILTIN, DEFAULT_PARAMS, DEFAULT_PARTIALS, INIT_PARAMS, INIT_PARTIALS, formatConfig, newPartial, parseConfig, partialParam,
+} from './config.js';
 import { Controller, describeMIDI, describeSource } from './controller.js';
 import { BluetoothMIDIInput, WebMIDIInput } from './midi.js';
+import { routeInput } from './input-rules.js';
+import { Recorder } from './recorder.js';
+import { mountLessons } from './lessons-ui.js';
+import { Keyboard, buildPanel } from './panel.js';
+import { mountPlay } from './play.js';
+import { LiveView, drawEnvelope, drawFilter, drawWaveform } from './visuals.js';
 
 const $ = (id) => document.getElementById(id);
 const STORAGE_KEY = 'soft-synth-web:config';
-
-// Slider ranges. exp = logarithmic (times and ratios); zero = the far left end means exactly 0.
-const SLIDERS = {
-  volume: { min: 0, max: 1 },
-  attack: { min: 0.001, max: 2, exp: true, unit: 's' },
-  decay: { min: 0.05, max: 8, exp: true, unit: 's' },
-  sustain: { min: 0, max: 1 },
-  release: { min: 0.02, max: 5, exp: true, unit: 's' },
-  brightness: { min: 0, max: 2 },
-  chorus: { min: 0, max: 1 },
-  detune: { min: 0, max: 30, unit: 'cents' },
-  reverb: { min: 0, max: 0.8 },
-  reverbSize: { min: 0, max: 0.97 },
-  reverbDamp: { min: 0, max: 0.99 },
-  vibrato: { min: 0, max: 1, unit: 'st' },
-  vibratoRate: { min: 0.5, max: 10, unit: 'Hz' },
-  transpose: { min: -24, max: 24, step: 1, unit: 'st' },
-  bend: { min: -2, max: 2, unit: 'st' },
-  velocity: { min: 0, max: 1 },
-};
-const PARTIAL_SLIDERS = {
-  ratio: { min: 0.25, max: 16, exp: true },
-  level: { min: 0, max: 1 },
-  velocity: { min: 0, max: 0.5 },
-  decay: { min: 0.02, max: 20, exp: true, zero: true, unit: 's' },
-};
+const SESSION_KEY = 'soft-synth-web:session'; // unsaved edits, so a reload does not lose them
+const MODE_KEY = 'soft-synth-web:mode';       // 'edit' or 'play'
 
 // MARK: log
 
@@ -48,9 +32,14 @@ function log(line) {
 
 let audioContext = null;
 let synthNode = null;
+let audioOut = null; // where every synth connects (the analyser in front of the speakers)
 
+/** Sends a message to the synth, and lights the on-screen keyboard for the notes it plays. */
 function send(msg) {
   synthNode?.port.postMessage(msg);
+  if (msg.type === 'noteOn') keyboard.set(msg.key, true);
+  else if (msg.type === 'noteOff') keyboard.set(msg.key, false);
+  else if (msg.type === 'allNotesOff') keyboard.clear();
 }
 
 async function startAudio() {
@@ -64,7 +53,12 @@ async function startAudio() {
     numberOfInputs: 0,
     outputChannelCount: [2],
   });
-  synthNode.connect(audioContext.destination);
+  // the analyser passes audio through unchanged and feeds the scope and spectrum screens
+  const analyser = new AnalyserNode(audioContext, { fftSize: 4096, smoothingTimeConstant: 0.6 });
+  synthNode.connect(analyser).connect(audioContext.destination);
+  new LiveView(analyser, $('scope'), $('spectrum'));
+  audioOut = analyser;
+  play?.attachAudio(audioContext, analyser);
   controller.sync();
   audioContext.onstatechange = renderAudioStatus;
   renderAudioStatus();
@@ -73,144 +67,257 @@ async function startAudio() {
 
 function renderAudioStatus() {
   const running = audioContext?.state === 'running';
-  $('audio-status').textContent = running ? `Playing · ${audioContext.sampleRate / 1000} kHz` : 'Stopped';
-  $('audio-status').classList.toggle('on', running);
-  $('start').textContent = running ? 'Sound is on' : 'Start sound';
-  $('start').disabled = running;
+  $('audio-led').classList.toggle('on', running);
+  $('start-label').textContent = running ? 'On' : 'Start';
+  $('audio-status').textContent = running ? `${audioContext.sampleRate / 1000} kHz` : 'audio off';
 }
 
-// MARK: controller and UI updates
+// MARK: controller
 
-let rawConfig = null; // the config as plain JSON, so saving a preset can rewrite it
+let rawConfig = null; // the config as plain JSON, so writing a preset can rewrite it
 let uiDirty = false;
+const recorder = new Recorder({ send, log });
+
 const controller = new Controller({
   send,
   log,
+  recorder,
   onChange: () => {
+    // save first: frames do not run while the tab is hidden, so this must not wait for the redraw
+    saveSession();
     // knobs send many messages; redraw at most once per frame
     if (uiDirty) return;
     uiDirty = true;
     requestAnimationFrame(() => {
       uiDirty = false;
-      renderPresets();
+      renderProgram();
       renderPages();
-      renderSliders();
+      renderControls();
+      renderGraphs();
     });
   },
   onSavePreset: (index, preset) => {
     if (!rawConfig?.presets) {
-      log('nothing to save into: apply a config that has "presets" first');
+      log('nothing to write into: apply a config that has "presets" first');
       return;
     }
     rawConfig.presets[index] = preset;
-    const text = formatConfig(rawConfig) + '\n';
-    $('config-text').value = text;
-    storageSet(text);
+    writeConfig();
+    play?.refresh(); // the Play screen uses the presets too
   },
 });
 
-function onMIDI(status, d1, d2) {
-  if ($('monitor').checked) log(`midi: ${describeMIDI(status, d1, d2)}`);
-  controller.handle(status, d1, d2);
+/** Writes the in-memory config (presets, performances) back to the editor and to storage. */
+function writeConfig() {
+  const text = formatConfig(rawConfig) + '\n';
+  $('config-text').value = text;
+  storageSet(text);
 }
 
-function syncButtons(box, labels, onClick) {
-  if (box.dataset.labels !== labels.join('\n')) {
-    box.replaceChildren(...labels.map((label, i) => {
-      const b = document.createElement('button');
-      b.textContent = label;
-      b.onclick = () => onClick(i);
-      return b;
-    }));
-    box.dataset.labels = labels.join('\n');
+// MARK: Edit / Play
+
+let mode = 'edit';
+let play = null; // the Play screen, mounted once the config is loaded
+
+function setMode(next) {
+  mode = next === 'play' && play ? 'play' : 'edit';
+  document.body.classList.toggle('mode-play', mode === 'play');
+  $('mode-toggle').textContent = mode === 'play' ? 'Edit' : 'Play';
+  $('mode-toggle').classList.toggle('on', mode === 'play');
+  // hand the instruments over cleanly: nothing keeps sounding from the other screen
+  recorder.stop(); // the recorder plays the Edit screen's synth
+  if (mode === 'play') {
+    controller.panic();
+    play.refresh();
+    if ($('lessons').hidden === false) $('lessons-toggle').click();
+  } else {
+    play?.panic();
   }
-  return [...box.children];
+  try { localStorage.setItem(MODE_KEY, mode); } catch { /* not essential */ }
 }
 
-function renderPresets() {
+function mountPlayScreen() {
+  play = mountPlay($('play'), {
+    stored: rawConfig?.performances,
+    links: rawConfig?.playLinks,
+    getConfig: () => controller.config,
+    save: (performances, links) => {
+      if (!rawConfig) return;
+      rawConfig.performances = performances;
+      rawConfig.playLinks = links;
+      writeConfig();
+    },
+    onKeysNote: (note, on) => keyboard.set(note, on),
+    midiInputs: () => (webMIDI.access ? webMIDI.inputs.filter((i) => i.state === 'connected').map((i) => i.name) : null),
+    startAudio,
+    log,
+  });
+  if (audioContext) play.attachAudio(audioContext, audioOut);
+  let saved = null;
+  try { saved = localStorage.getItem(MODE_KEY); } catch { /* start in edit */ }
+  setMode(saved === 'play' ? 'play' : 'edit');
+}
+
+/** Notes from the on-screen or computer keyboard go to whichever screen is active. */
+function playNote(note, on, velocity) {
+  if (mode === 'play') play.keysNote(note, on, velocity);
+  else controller.handle(on ? 0x90 : 0x80, note, on ? velocity : 0);
+}
+
+let midiFlash = 0;
+/** One complete message from a MIDI input (port = the input's name): input rules first, then the active screen. */
+function onMIDI(bytes, port) {
+  const routed = routeInput(controller.config.inputs, port, bytes);
+  if ($('monitor').checked) {
+    const incoming = bytes[0] === 0xf0 ? `sysex ${bytes.map((b) => b.toString(16).padStart(2, '0')).join(' ')}`
+      : describeMIDI(bytes[0], bytes[1] ?? 0, bytes[2] ?? 0);
+    const result = !routed ? ' → dropped'
+      : routed[0] !== bytes[0] || bytes[0] === 0xf0 ? ` → ${describeMIDI(...routed)}` : '';
+    log(`midi: ${incoming}${result}${port ? ` (${port})` : ''}`);
+  }
+  if (!routed) return;
+  const [status, d1, d2] = routed;
+  if (mode === 'play') play.handle(status, d1, d2);
+  else controller.handle(status, d1, d2);
+  $('midi-led').classList.add('flash');
+  clearTimeout(midiFlash);
+  midiFlash = setTimeout(() => $('midi-led').classList.remove('flash'), 80);
+}
+
+// MARK: panel
+
+/** The value a control returns to on double-click: what the current preset (or the init patch) says. */
+function presetValue(name) {
+  const unsaved = controller.presetIndex < 0;
+  const preset = controller.config.presets[controller.presetIndex];
+  const pp = partialParam(name);
+  if (pp) {
+    const partials = unsaved ? INIT_PARTIALS : preset?.partials ?? DEFAULT_PARTIALS;
+    return (partials[pp.index] ?? newPartial(pp.index))[pp.field];
+  }
+  if (unsaved) return INIT_PARAMS[name];
+  return { ...DEFAULT_PARAMS, ...controller.config.params, ...preset?.values }[name];
+}
+
+const controls = buildPanel(
+  { rows: [$('row-1'), $('row-2')], additive: $('additive') },
+  {
+    get: (name) => controller.getParam(name),
+    set: (name, v) => controller.setParam(name, v),
+    reset: (name) => controller.setParam(name, presetValue(name), true),
+  },
+);
+
+const keyboard = new Keyboard($('keyboard'), {
+  low: 48,
+  high: 84,
+  onNote: (note, on) => {
+    if (on) startAudio();
+    playNote(note, on, 90);
+  },
+});
+
+mountLessons({
+  drawer: $('lessons'),
+  toggle: $('lessons-toggle'),
+  controller,
+  controls,
+  startAudio,
+  play: (note, on, velocity) => controller.handle(on ? 0x90 : 0x80, note, velocity),
+});
+
+function renderControls() {
+  for (const [name, c] of controls) c.update(controller.getParam(name));
+  [...$('additive').children].forEach((col, i) => col.classList.toggle('unused', i >= controller.partials.length));
+  // badges: which hardware control moves each panel control (knob number on the current page, or its CC)
+  const badges = new Map();
+  let n = 0;
+  for (const c of controller.activeControls) {
+    if (c.target.kind !== 'param') continue;
+    if (c.page !== null) badges.set(c.target.param, String(++n));
+    else if (!badges.has(c.target.param)) badges.set(c.target.param, c.source.type === 'pitchBend' ? 'PB' : `cc${c.source.number}`);
+  }
+  for (const [name, c] of controls) c.badge(badges.get(name));
+}
+
+function renderProgram() {
   const presets = controller.config.presets;
-  syncButtons($('presets'), presets.map((p) => p.name), (i) => controller.selectPreset(i))
-    .forEach((b, i) => b.classList.toggle('active', i === controller.presetIndex));
+  const select = $('preset-select');
+  const unsaved = controller.presetIndex < 0;
+  const names = (unsaved ? '\u0000' : '') + presets.map((p) => p.name).join('\n');
+  if (select.dataset.names !== names) {
+    const options = presets.map((p, i) => new Option(p.name, String(i)));
+    // the init patch is not a preset yet: show it only while it is being edited
+    if (unsaved) options.push(new Option('init (unsaved)', '-1'));
+    select.replaceChildren(...options);
+    select.dataset.names = names;
+  }
+  select.value = String(controller.presetIndex);
+  // "*" = edited and not written yet
+  $('preset-number').textContent = (unsaved ? '--' : String(controller.presetIndex + 1).padStart(2, '0'))
+    + (controller.edited ? '*' : '');
 }
 
 function renderPages() {
   const pages = controller.config.pages;
-  $('pages-card').hidden = pages.length === 0;
-  if (pages.length === 0) return;
-  syncButtons($('pages'), pages, (i) => controller.selectPage(pages[i]))
-    .forEach((b, i) => b.classList.toggle('active', pages[i] === controller.page));
-  // what each knob does on this page
+  $('pages-box').hidden = pages.length === 0;
+  const box = $('pages');
+  if (box.dataset.pages !== pages.join('\n')) {
+    box.replaceChildren(...pages.map((p) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = p;
+      b.onclick = () => controller.selectPage(p);
+      return b;
+    }));
+    box.dataset.pages = pages.join('\n');
+  }
+  [...box.children].forEach((b, i) => b.classList.toggle('on', pages[i] === controller.page));
   const items = controller.activeControls
     .filter((c) => c.page !== null && c.target.kind === 'param')
-    .map((c) => `<li><span>${describeSource(c)}</span>${c.target.param}</li>`);
-  $('page-controls').innerHTML = items.join('');
+    .map((c, i) => `<li><span>${i + 1} · ${describeSource(c)}</span>${c.target.param}</li>`);
+  $('page-controls').innerHTML = items.length ? items.join('') : '<li class="muted">This config has no knob pages.</li>';
 }
 
-const toSlider = (s, v) => {
-  if (s.zero && v <= 0) return 0;
-  return s.exp ? Math.log(v / s.min) / Math.log(s.max / s.min) : (v - s.min) / (s.max - s.min);
-};
-const fromSlider = (s, x) => {
-  if (s.zero && x < 0.005) return 0;
-  let v = s.exp ? s.min * (s.max / s.min) ** x : s.min + (s.max - s.min) * x;
-  if (s.step) v = Math.round(v / s.step) * s.step;
-  return v;
-};
-const format = (s, v) => {
-  if (s.zero && v === 0) return 'off';
-  const n = s.step ? String(v) : v.toFixed(v >= 10 ? 1 : v >= 1 ? 2 : 3);
-  return s.unit ? `${n} ${s.unit}` : n;
-};
-
-/** name → { spec, input, output } for every slider on the page */
-const sliders = new Map();
-
-function makeSlider(name, label, spec) {
-  const wrap = document.createElement('div');
-  wrap.className = 'param';
-  const id = `p-${name.replace('.', '-')}`;
-  wrap.innerHTML = `<label for="${id}">${label}<output></output></label>
-    <input type="range" id="${id}" min="0" max="1000" step="1">`;
-  const input = wrap.querySelector('input');
-  input.addEventListener('input', () => controller.setParam(name, fromSlider(spec, input.value / 1000)));
-  sliders.set(name, { spec, input, output: wrap.querySelector('output') });
-  return wrap;
+function renderGraphs() {
+  drawWaveform($('waveform'), controller.params, controller.partials);
+  drawFilter($('filter'), controller.params, controller.partials);
+  drawEnvelope($('envelope'), controller.params);
 }
 
-function buildSliders() {
-  $('params').replaceChildren(...PARAMS.map((p) => makeSlider(p, p, SLIDERS[p])));
-  const rows = [];
-  for (let i = 1; i <= MAX_PARTIALS; i++) {
-    const row = document.createElement('div');
-    row.className = 'partial-row';
-    const head = document.createElement('div');
-    head.className = 'partial-name';
-    head.textContent = `partial ${i}`;
-    row.append(head, ...PARTIAL_FIELDS.map((f) => makeSlider(`partial${i}.${f}`, f, PARTIAL_SLIDERS[f])));
-    rows.push(row);
-  }
-  $('partials').replaceChildren(...rows);
-}
-
-function renderSliders() {
-  for (const [name, { spec, input, output }] of sliders) {
-    const v = controller.getParam(name);
-    if (document.activeElement !== input) {
-      input.value = Math.round(Math.min(Math.max(toSlider(spec, v), 0), 1) * 1000);
-    }
-    output.textContent = format(spec, v);
-  }
-  [...$('partials').children].forEach((row, i) => row.classList.toggle('unused', i >= controller.partials.length));
-}
+new ResizeObserver(() => renderGraphs()).observe($('envelope'));
 
 // MARK: config
 
-function storageGet() {
-  try { return localStorage.getItem(STORAGE_KEY); } catch { return null; }
+function storageGet(key = STORAGE_KEY) {
+  try { return localStorage.getItem(key); } catch { return null; }
 }
 
-function storageSet(text) {
-  try { localStorage.setItem(STORAGE_KEY, text); } catch { /* keep working even if it cannot be saved */ }
+function storageSet(text, key = STORAGE_KEY) {
+  try { localStorage.setItem(key, text); } catch { /* keep working even if it cannot be saved */ }
+}
+
+// the working state is written shortly after each change (and when the page goes away),
+// but only once the previous session has been put back, so loading does not overwrite it
+let sessionReady = false;
+let sessionTimer = 0;
+function writeSession() {
+  clearTimeout(sessionTimer);
+  if (sessionReady) storageSet(JSON.stringify(controller.snapshot()), SESSION_KEY);
+}
+function saveSession() {
+  clearTimeout(sessionTimer);
+  sessionTimer = setTimeout(writeSession, 300);
+}
+addEventListener('pagehide', writeSession);
+
+function restoreSession() {
+  let state = null;
+  try { state = JSON.parse(storageGet(SESSION_KEY)); } catch { /* damaged: start from the preset */ }
+  if (controller.restore(state)) {
+    log(`restored last session: ${state.preset ?? 'init patch'}${state.edited ? ' with unsaved edits' : ''}`);
+  }
+  sessionReady = true;
 }
 
 async function fetchTemplate(path) {
@@ -225,6 +332,12 @@ function applyConfigText(text, { save }) {
     const config = parseConfig(text);
     rawConfig = JSON.parse(text);
     controller.load(config);
+    if (config.inputs.length) log(`input rules: ${config.inputs.length}`);
+    if (play) {
+      // a new config may bring its own performances: rebuild the Play screen from it
+      play.dispose();
+      mountPlayScreen();
+    }
     err.hidden = true;
     if (save) {
       storageSet(text);
@@ -305,11 +418,13 @@ let octave = 0;
 const keyNotes = new Map(); // held key → note it started (so octave changes still stop the right note)
 
 function isTyping(e) {
-  return e.target.closest('textarea, input:not([type=range]), select');
+  return e.target instanceof Element && e.target.closest('textarea, input:not([type=range]), select');
 }
 
 addEventListener('keydown', (e) => {
   if (e.repeat || e.metaKey || e.ctrlKey || isTyping(e)) return;
+  // arrow keys belong to a focused knob
+  if (e.target instanceof Element && e.target.closest('.knob-dial')) return;
   const k = e.key.toLowerCase();
   if (k === 'z' || k === 'x') {
     octave = Math.min(Math.max(octave + (k === 'x' ? 12 : -12), -36), 36);
@@ -321,26 +436,50 @@ addEventListener('keydown', (e) => {
   const note = 60 + octave + i;
   keyNotes.set(k, note);
   startAudio();
-  controller.handle(0x90, note, 90);
+  playNote(note, true, 90);
 });
 
 addEventListener('keyup', (e) => {
   const k = e.key.toLowerCase();
   if (!keyNotes.has(k)) return;
-  controller.handle(0x80, keyNotes.get(k), 0);
+  playNote(keyNotes.get(k), false, 0);
   keyNotes.delete(k);
 });
 
 // MARK: startup
 
-buildSliders();
 $('start').onclick = async () => {
   await startAudio();
   await startMIDI();
 };
-$('panic').onclick = () => controller.panic();
-$('save-preset').onclick = () => controller.savePreset();
-$('revert-preset').onclick = () => controller.selectPreset(controller.presetIndex);
+$('panic').onclick = () => (mode === 'play' ? play.panic() : controller.panic());
+$('undo').onclick = () => controller.undo();
+addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === 'z' && !isTyping(e)) {
+    e.preventDefault();
+    controller.undo();
+  }
+});
+$('new-preset').onclick = () => controller.newPatch();
+$('save-preset').onclick = () => {
+  // keeping the name overwrites this preset; a new name saves a copy
+  const current = controller.presetName;
+  const name = prompt('Save this sound as:', current ?? 'init')?.trim();
+  if (!name) return;
+  const taken = controller.config.presets.some((p) => p.name === name);
+  if (name !== current && taken && !confirm(`A preset called “${name}” exists. Overwrite it?`)) return;
+  controller.savePreset(name);
+};
+$('revert-preset').onclick = () => {
+  if (controller.presetIndex < 0) controller.newPatch();
+  else controller.selectPreset(controller.presetIndex);
+};
+$('preset-select').onchange = (e) => controller.selectPreset(Number(e.target.value));
+$('preset-prev').onclick = () => {
+  const n = controller.config.presets.length;
+  controller.selectPreset(((controller.presetIndex < 0 ? 0 : controller.presetIndex) + n - 1) % n);
+};
+$('preset-next').onclick = () => controller.selectPreset((controller.presetIndex + 1) % controller.config.presets.length);
 $('config-apply').onclick = () => applyConfigText($('config-text').value, { save: true });
 $('config-load').onclick = async () => {
   try {
@@ -373,5 +512,12 @@ $('ble-connect').onclick = async () => {
   }
 };
 
+$('mode-toggle').onclick = () => setMode(mode === 'play' ? 'edit' : 'play');
+
 renderAudioStatus();
-initConfig();
+initConfig().then(() => {
+  restoreSession();
+  mountPlayScreen();
+  // MIDI needs no click (unlike audio), so listen right away: forgetting Start must not silence the keyboard
+  startMIDI();
+});
