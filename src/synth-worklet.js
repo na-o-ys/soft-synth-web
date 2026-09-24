@@ -1,5 +1,5 @@
-// シンセ本体（サイン波の加算合成 + 軽量リバーブ）。AudioWorklet のオーディオスレッドで動く。
-// process() 内ではメモリ確保をしない（GC による音切れを防ぐ）ため、状態はすべて事前確保した配列に持つ
+// The synth (additive sine synthesis + a light reverb), running on the AudioWorklet audio thread.
+// process() never allocates (to avoid GC glitches), so all state lives in preallocated arrays.
 
 const MAX_VOICES = 32;
 const MAX_PARTIALS = 8;
@@ -9,22 +9,23 @@ const ATTACK = 0, DECAY = 1, RELEASE = 2;
 class Voice {
   constructor() {
     this.active = false;
-    this.key = -1;          // 押された鍵盤（transpose 前）。noteOff の照合に使う
-    this.gate = false;      // 鍵盤を押している
-    this.sustained = false; // 離したがペダルで保持中
+    this.key = -1;          // key pressed (before transpose); used to match noteOff
+    this.gate = false;      // key is held
+    this.sustained = false; // released but held by the sustain pedal
     this.stage = ATTACK;
     this.env = 0;
     this.gain = 0;
     this.panL = 0;
     this.panR = 0;
     this.phase = new Float64Array(MAX_PARTIALS);
-    this.amp = new Float32Array(MAX_PARTIALS); // 各 partial の現在の音量（時間で減衰）
+    this.vn = 0;            // note velocity 0...1
+    this.amp = new Float32Array(MAX_PARTIALS); // per-partial decay envelope (starts at 1)
     this.chorusPhase = 0.25;
     this.age = 0;
   }
 }
 
-// 4 本の遅延線による軽量 FDN リバーブ。残響が消えたら idle になり処理を止める
+// Light FDN reverb with four delay lines. Goes idle (stops processing) once the tail has died out.
 class Reverb {
   constructor(sr) {
     this.lengths = [1557, 1617, 1491, 1422].map((n) => Math.floor((n * sr) / 44100));
@@ -32,7 +33,7 @@ class Reverb {
     this.pos = [0, 0, 0, 0];
     this.damp = new Float32Array(4);
     this.feedback = 0.8;
-    this.dampCoef = 0.35; // ループ内ローパス（小さいほど残響が暗く柔らかい）
+    this.dampCoef = 0.35; // in-loop lowpass (smaller = darker, softer tail)
     this.wet = 0.22;
     this.idle = true;
   }
@@ -51,7 +52,7 @@ class Reverb {
       damp[1] += dc * (b - damp[1]);
       damp[2] += dc * (c - damp[2]);
       damp[3] += dc * (d - damp[3]);
-      // Hadamard 行列で混ぜる
+      // mix through a Hadamard matrix
       const w = damp[0], x = damp[1], y = damp[2], z = damp[3];
       l0[p0] = input + g * (w + x + y + z);
       l1[p1] = input + g * (w - x + y - z);
@@ -92,9 +93,9 @@ class SoftSynthProcessor extends AudioWorkletProcessor {
     this.partialDecayCoef = new Float32Array(MAX_PARTIALS);
     this.bright = new Float32Array(MAX_PARTIALS);
     this.baseInc = new Float64Array(MAX_PARTIALS);
-    this.a = new Float32Array(MAX_PARTIALS);
+    this.lv = new Float32Array(MAX_PARTIALS);
 
-    // メッセージはオーディオスレッドで process() の合間に届く
+    // messages arrive on the audio thread between process() calls
     this.port.onmessage = (e) => this.handle(e.data);
   }
 
@@ -133,7 +134,7 @@ class SoftSynthProcessor extends AudioWorkletProcessor {
       this.level[k] = q ? q.level : 0;
       this.velocityLevel[k] = q ? q.velocity : 0;
       this.partialDecayCoef[k] = q && q.decay > 0 ? Math.exp(-1 / (q.decay * sr)) : 1;
-      // ratio == 1 の partial は基音、それ以外は brightness で量を変える
+      // ratio == 1 is the fundamental; brightness scales every other partial
       this.bright[k] = this.ratio[k] === 1 ? 1 : p.brightness;
     }
     this.reverb.feedback = Math.min(Math.max(p.reverbSize, 0), 0.97);
@@ -144,11 +145,11 @@ class SoftSynthProcessor extends AudioWorkletProcessor {
   noteOn(key, vel) {
     const voices = this.voices;
     this.counter++;
-    // 同じ鍵盤が鳴っていればそのボイスを再トリガ（位相を保つのでクリックしない）
+    // retrigger the voice already playing this key (keeps phase, so no click)
     let v = voices.find((x) => x.active && x.key === key);
     if (!v) v = voices.find((x) => !x.active);
     if (!v) {
-      // 空きがなければ、リリース中で最も小さい音 → 最も古い音 を奪う
+      // no free voice: steal the quietest releasing voice, then the oldest one
       let best = voices[0], bestScore = Infinity;
       for (const x of voices) {
         const score = (x.stage === RELEASE ? 0 : 10) + x.env - (this.counter - x.age) * 1e-6;
@@ -160,7 +161,7 @@ class SoftSynthProcessor extends AudioWorkletProcessor {
     const p = this.p;
     const note = key + Math.round(p.transpose);
     const vn = vel / 127;
-    const keyScale = Math.min(Math.max(2 ** (-(note - 60) / 36), 0.55), 1.4); // 高音を少し抑える
+    const keyScale = Math.min(Math.max(2 ** (-(note - 60) / 36), 0.55), 1.4); // tame high notes a little
     const pan = (Math.min(Math.max(note - 64, -64), 64) / 64) * 0.35;
     const sens = Math.min(Math.max(p.velocity, 0), 1);
 
@@ -174,7 +175,8 @@ class SoftSynthProcessor extends AudioWorkletProcessor {
     v.gain = (1 - sens + sens * vn ** 1.6) * keyScale;
     v.panL = Math.cos(((pan + 1) * Math.PI) / 4);
     v.panR = Math.sin(((pan + 1) * Math.PI) / 4);
-    for (let k = 0; k < MAX_PARTIALS; k++) v.amp[k] = this.level[k] + this.velocityLevel[k] * vn;
+    v.vn = vn;
+    v.amp.fill(1);
     if (!retrigger) {
       v.env = 0;
       v.phase.fill(0);
@@ -200,19 +202,23 @@ class SoftSynthProcessor extends AudioWorkletProcessor {
     const frames = L.length;
     const sr = this.sr;
     const count = this.partialCount;
-    // transpose は鳴っている音にも即座に効かせる（ストリップで動かしても音が切れない）
+    // transpose applies to sounding notes too (moving a strip does not cut them)
     const pitchOffset = Math.round(p.transpose) + p.bend - 69;
     const chorusRatio = 2 ** (p.detune / 1200);
     const lfoInc = p.vibratoRate / sr;
     const vibDepth = p.vibrato;
     const sustain = p.sustain;
-    const { attackInc, decayCoef, releaseCoef, ratio, partialDecayCoef, bright, baseInc, a } = this;
+    const { attackInc, decayCoef, releaseCoef, ratio, level, velocityLevel, partialDecayCoef, bright, baseInc, lv } = this;
 
     let anyActive = false;
     for (const v of this.voices) {
       if (!v.active) continue;
       const freq = 440 * 2 ** ((v.key + pitchOffset) / 12);
-      for (let k = 0; k < count; k++) baseInc[k] = (ratio[k] * freq) / sr;
+      // levels are read every block so editing a partial is heard on notes that are already sounding
+      for (let k = 0; k < count; k++) {
+        baseInc[k] = (ratio[k] * freq) / sr;
+        lv[k] = (level[k] + velocityLevel[k] * v.vn) * bright[k];
+      }
       const chorusInc = (freq * chorusRatio) / sr;
       const phase = v.phase, amp = v.amp;
       let env = v.env, stage = v.stage, lfo = this.lfoPhase, chorusPhase = v.chorusPhase;
@@ -236,7 +242,7 @@ class SoftSynthProcessor extends AudioWorkletProcessor {
 
         let main = 0;
         for (let k = 0; k < count; k++) {
-          main += amp[k] * bright[k] * Math.sin(TWO_PI * phase[k]);
+          main += lv[k] * amp[k] * Math.sin(TWO_PI * phase[k]);
           let ph = phase[k] + baseInc[k] * vib;
           if (ph >= 1) ph -= Math.floor(ph);
           phase[k] = ph;
@@ -246,7 +252,7 @@ class SoftSynthProcessor extends AudioWorkletProcessor {
         chorusPhase += chorusInc * vib;
         if (chorusPhase >= 1) chorusPhase -= 1;
         const g = env * gain;
-        // デチューン成分を左右で配分を変えて自然な広がりを出す
+        // split the detuned copy unevenly between L/R for natural width
         L[f] += (main + 0.35 * ch) * g * panL;
         R[f] += (0.85 * main + 0.65 * ch) * g * panR;
       }
@@ -263,9 +269,9 @@ class SoftSynthProcessor extends AudioWorkletProcessor {
     }
 
     if (anyActive) this.reverb.idle = false;
-    if (this.reverb.idle) return true; // 無音時はほぼ何もしない
+    if (this.reverb.idle) return true; // nearly free while silent
 
-    // マスター: 同時押しで音割れしないよう tanh でソフトクリップ
+    // master: tanh soft clip so big chords do not distort harshly
     const vol = Math.max(p.volume, 0);
     for (let f = 0; f < frames; f++) {
       L[f] = Math.tanh(L[f] * 0.25) * vol;

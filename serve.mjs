@@ -1,5 +1,5 @@
-// ローカル確認用の静的ファイルサーバー: node serve.mjs [port]
-// （AudioWorklet と Web MIDI は file:// では動かないため http://localhost で配信する）
+// Static file server for local use: node serve.mjs [port]
+// (AudioWorklet and Web MIDI do not work from file://, so serve over http://localhost)
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';

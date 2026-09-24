@@ -1,13 +1,13 @@
-// MIDI 入力: Web MIDI（OS が接続済みの USB / BLE 鍵盤）と Web Bluetooth（BLE MIDI 鍵盤に直接接続）
+// MIDI input: Web MIDI (USB / BLE keyboards the OS has connected) and Web Bluetooth (direct BLE MIDI connection)
 
-/** Web MIDI の全入力を受け取る。抜き差しに追従する */
+/** Receives from every Web MIDI input and follows hot-plugging. */
 export class WebMIDIInput {
   constructor({ onMessage, onDevicesChange, log }) {
     this.onMessage = onMessage;
     this.onDevicesChange = onDevicesChange;
     this.log = log;
     this.access = null;
-    this.ignoredNames = new Set(); // Web Bluetooth で直接つないでいる鍵盤（二重に鳴らさない）
+    this.ignoredNames = new Set(); // keyboards connected directly over Web Bluetooth (avoid playing twice)
   }
 
   get supported() {
@@ -50,7 +50,7 @@ export class WebMIDIInput {
 const MIDI_SERVICE = '03b80e5a-ede8-4b33-a751-6ce34ec4c700';
 const MIDI_CHARACTERISTIC = '7772e5db-3868-4112-a1a9-f2669d106bf3';
 
-/** BLE MIDI 鍵盤に Web Bluetooth で直接つなぐ（Chrome / Edge）。切れたら再接続を試みる */
+/** Connects to a BLE MIDI keyboard over Web Bluetooth (Chrome / Edge) and reconnects when it drops. */
 export class BluetoothMIDIInput {
   constructor({ onMessage, onStatus, log }) {
     this.onMessage = onMessage;
@@ -85,7 +85,7 @@ export class BluetoothMIDIInput {
 
   async reconnect() {
     this.log(`bluetooth disconnected: ${this.device.name}`);
-    this.onMessage(0xb0, 123, 0); // 鳴りっぱなしを防ぐ
+    this.onMessage(0xb0, 123, 0); // avoid stuck notes
     for (let delay = 1000; this.device; delay = Math.min(delay * 2, 30000)) {
       this.setStatus('reconnecting');
       await new Promise((r) => setTimeout(r, delay));
@@ -93,7 +93,7 @@ export class BluetoothMIDIInput {
         await this.open();
         return;
       } catch {
-        // 鍵盤の電源が切れている間はここを繰り返す
+        // keeps retrying while the keyboard is off
       }
     }
   }
@@ -111,7 +111,7 @@ export class BluetoothMIDIInput {
   }
 }
 
-// MIDI 1.0 メッセージのデータバイト数（ステータスの上位 4 bit / システムメッセージ別）
+// number of data bytes for a MIDI 1.0 status byte
 function dataLength(status) {
   switch (status & 0xf0) {
     case 0xc0: case 0xd0: return 1;
@@ -124,9 +124,9 @@ function dataLength(status) {
 }
 
 /**
- * BLE MIDI のパケットを MIDI メッセージに分解する。
- * 形式: [header] ([timestamp] status data...)... 。同じパケット内ではランニングステータスで
- * タイムスタンプやステータスが省略されることがある。SysEx は読み飛ばす
+ * Splits a BLE MIDI packet into MIDI messages.
+ * Layout: [header] ([timestamp] status data...)... Within a packet, running status may omit
+ * the timestamp and/or status byte. SysEx is skipped.
  */
 export function parseBLEMIDIPacket(data, emit) {
   let i = 1; // header
@@ -138,13 +138,13 @@ export function parseBLEMIDIPacket(data, emit) {
       if (data[i] & 0x80) {
         const status = data[i++];
         if (status === 0xf0) {
-          // SysEx: 0xF7（直前にタイムスタンプが入る）まで飛ばす
+          // SysEx: skip to 0xF7 (preceded by a timestamp byte)
           while (i < data.length && data[i] !== 0xf7) i++;
           i++;
           running = 0;
           continue;
         }
-        if (status >= 0xf8) continue; // リアルタイムメッセージ（データなし）
+        if (status >= 0xf8) continue; // realtime message (no data)
         running = status;
       }
     }
@@ -154,6 +154,6 @@ export function parseBLEMIDIPacket(data, emit) {
     const d2 = n === 2 ? data[i + 1] ?? 0 : 0;
     i += n;
     if (running < 0xf0) emit(running, d1 & 0x7f, d2 & 0x7f);
-    else running = 0; // システムコモンはランニングステータスを解除する
+    else running = 0; // system common messages cancel running status
   }
 }
