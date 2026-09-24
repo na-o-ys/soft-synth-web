@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Soft Synth</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="src/main.js"></script>
+</head>
+<body>
+  <header>
+    <h1>Soft Synth</h1>
+    <button id="start" class="primary">音を出す</button>
+    <span id="audio-status" class="pill">停止中</span>
+  </header>
+
+  <main>
+    <section class="card" id="devices">
+      <h2>MIDI 入力</h2>
+      <ul id="midi-inputs" class="list"><li class="muted">「音を出す」を押すと MIDI 鍵盤を探します</li></ul>
+      <div class="row">
+        <button id="ble-connect">Bluetooth MIDI 鍵盤に接続</button>
+        <span id="ble-status" class="muted"></span>
+      </div>
+      <p class="hint">PC のキーボードでも弾けます: A W S E D F T G Y H U J K = ド〜ド、Z / X = オクターブ</p>
+    </section>
+
+    <section class="card" id="presets-card">
+      <h2>プリセット</h2>
+      <div id="presets" class="buttons"></div>
+      <button id="panic" class="ghost">全消音</button>
+    </section>
+
+    <section class="card wide" id="params-card">
+      <h2>パラメータ</h2>
+      <div id="params" class="params"></div>
+    </section>
+
+    <section class="card wide" id="config-card">
+      <h2>設定（JSON）</h2>
+      <div class="row">
+        <label>ひな形
+          <select id="config-template">
+            <option value="configs/default.json">一般的な MIDI 鍵盤</option>
+            <option value="configs/smk25ii.json">M-VAVE SMK-25 II</option>
+          </select>
+        </label>
+        <button id="config-load">ひな形を読み込む</button>
+        <button id="config-apply" class="primary">適用して保存</button>
+      </div>
+      <textarea id="config-text" spellcheck="false" rows="18"></textarea>
+      <p id="config-error" class="error" hidden></p>
+      <p class="hint">形式はネイティブ版 soft-synth と同じです。保存先はこのブラウザ内です。</p>
+    </section>
+
+    <section class="card wide">
+      <h2>ログ</h2>
+      <div class="row">
+        <label><input type="checkbox" id="monitor"> 受信した MIDI メッセージも表示する（割り当て作成用）</label>
+      </div>
+      <pre id="log" class="log"></pre>
+    </section>
+  </main>
+</body>
+</html>
