@@ -1,5 +1,7 @@
 # soft-synth-web
 
+**Try it: https://na-o-ys.github.io/soft-synth-web/** (Chrome or Edge recommended; press **Start**, allow MIDI access)
+
 A gentle-sounding synth in the browser that plays whatever MIDI keyboard you connect.
 It is the web port of the macOS daemon [soft-synth](https://github.com/na-o-ys/soft-synth):
 same config format, extended into a classic subtractive synth for designing sounds from the keyboard.
