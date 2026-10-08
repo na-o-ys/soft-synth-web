@@ -11,6 +11,7 @@ import { mountLessons } from './lessons-ui.js';
 import { Keyboard, buildPanel } from './panel.js';
 import { mountPlay } from './play.js';
 import { mountFm } from './fm/fm-app.js';
+import { createNativeSync } from './native-sync.js';
 import { FM_INTRO, FM_LESSONS } from './fm/fm-lessons.js';
 import { sanitizeVoice } from './fm/voice.js';
 import { PAGE_GROUPS, checkPages } from './pages.js';
@@ -92,6 +93,7 @@ function setMaster(v, save = true) {
   $('master-value').textContent = String(v);
   masterGain?.gain.setTargetAtTime(masterCurve(v), masterGain.context.currentTime, 0.02); // no zipper noise
   if (save) try { localStorage.setItem(MASTER_KEY, String(v)); } catch { /* not essential */ }
+  if (save && typeof nativeSync !== 'undefined') nativeSync.schedule();
 }
 $('master').addEventListener('input', (e) => setMaster(Number(e.target.value)));
 $('master').addEventListener('dblclick', () => setMaster(100));
@@ -193,7 +195,8 @@ function setMode(next) {
 }
 
 /** FM presets are library presets with "engine": "fm" and the DX7 voice under "fm". */
-const fmPresets = () => (rawLibrary?.presets ?? []).filter((p) => p?.engine === 'fm' && typeof p.name === 'string').map((p) => ({ name: p.name, voice: sanitizeVoice(p.fm) }));
+const fmPresets = () => (rawLibrary?.presets ?? []).filter((p) => p?.engine === 'fm' && typeof p.name === 'string')
+  .map((p) => ({ name: p.name, group: typeof p.group === 'string' ? p.group : null, voice: sanitizeVoice(p.fm) }));
 
 function mountFmPage() {
   const nameTaken = (name) => {
@@ -210,9 +213,10 @@ function mountFmPage() {
     knobBound: (k) => !!surface.knobs[k],
     editActions: () => settings.edit,
     savePreset: (name, voice) => {
-      const entry = { name, engine: 'fm', fm: structuredClone(voice) };
       const list = [...(rawLibrary.presets ?? [])];
       const i = list.findIndex((p) => p?.name === name);
+      // overwriting keeps the preset's group (an FM drum stays a drum)
+      const entry = { name, engine: 'fm', ...(list[i]?.group ? { group: list[i].group } : {}), fm: structuredClone(voice) };
       if (i >= 0) list[i] = entry; else list.push(entry);
       rawLibrary.presets = list;
       saveLibrary();
@@ -253,7 +257,7 @@ function mountPlayScreen() {
     stored: store.performances(),
     surface,
     // the Play screen plays FM presets too: they join the list with their voice
-    getConfig: () => ({ ...controller.config, presets: [...controller.config.presets, ...fmPresets().map((p) => ({ name: p.name, group: null, engine: 'fm', voice: p.voice, values: {} }))] }),
+    getConfig: () => ({ ...controller.config, presets: [...controller.config.presets, ...fmPresets().map((p) => ({ name: p.name, group: p.group, engine: 'fm', voice: p.voice, values: {} }))] }),
     save: (performances) => store.savePerformances(performances),
     saveKit: (kit) => {
       rawLibrary.kits = [...(rawLibrary.kits ?? []).filter((k) => k.name !== kit.name), kit];
@@ -267,6 +271,7 @@ function mountPlayScreen() {
     },
     onKeysNote: (note, on) => keyboard.set(note, on),
     onTransportChange: () => updateLights(),
+    onStateChange: () => nativeSync.schedule(),
     startAudio,
     log,
   });
@@ -595,7 +600,25 @@ async function initConfig() {
 
 // MARK: MIDI input
 
-const webMIDI = new WebMIDIInput({ onMessage: onMIDI, onDevicesChange: () => { renderInputs(); updateLights(); }, log });
+const webMIDI = new WebMIDIInput({ onMessage: onMIDI, onDevicesChange: () => { renderInputs(); updateLights(); nativeSync.devicesChanged(); }, log });
+
+// the native soft-synth app follows the Play screen when this is on (see native-sync.js)
+const nativeSync = createNativeSync({
+  output: () => webMIDI.outputNamed('soft-synth'),
+  getState: () => play && {
+    ...play.exportState(),
+    mackie: settings.mackie ? { ports: settings.mackie.ports, sysexNote: settings.mackie.sysexNote } : null,
+    drop: settings.inputs.filter((r) => r.drop && r.port && r.channel === null && r.note === null).map((r) => r.port),
+    master: masterCurve(Number($('master').value)),
+  },
+  log,
+  onChange: () => {
+    $('native-sync').checked = nativeSync.enabled;
+    $('native-sync-status').textContent = nativeSync.connected ? 'app found' : 'app not running (or MIDI not started)';
+  },
+});
+$('native-sync').onchange = (e) => nativeSync.setEnabled(e.target.checked);
+nativeSync.devicesChanged(); // show the setting and whether the app is there
 const bleMIDI = new BluetoothMIDIInput({
   onMessage: onMIDI,
   log,
@@ -621,7 +644,7 @@ function renderInputs() {
   }
   list.replaceChildren(...inputs.map((i) => {
     const li = document.createElement('li');
-    li.textContent = i.name + (i.ignored ? ' (ignored: connected directly over Bluetooth)' : '');
+    li.textContent = i.name + (i.ignored ? ` (ignored: ${i.ignored})` : '');
     if (i.ignored) li.className = 'muted';
     return li;
   }));

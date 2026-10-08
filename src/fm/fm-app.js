@@ -294,7 +294,16 @@ export function mountFm(root, hooks) {
     }));
     const presets = hooks.presets();
     const select = $('fm-preset-select');
-    select.replaceChildren(new Option('— new voice —', ''), ...presets.map((x) => new Option(x.name, x.name)));
+    // sounds, then drums, each under its heading (as on the Analog page)
+    const group = (label, list) => {
+      const og = document.createElement('optgroup');
+      og.label = label;
+      og.append(...list.map((x) => new Option(x.name, x.name)));
+      return og;
+    };
+    const drums = presets.filter((x) => x.group === 'drums');
+    select.replaceChildren(new Option('— new voice —', ''), group('sounds', presets.filter((x) => x.group !== 'drums')),
+      ...(drums.length ? [group('drums', drums)] : []));
     select.options[0].hidden = presetName !== null;
     select.value = presetName ?? '';
     const i = presets.findIndex((x) => x.name === presetName);

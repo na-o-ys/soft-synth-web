@@ -9,7 +9,8 @@ export class Looper {
    * @param {(e: object, on: boolean) => void} hooks.trigger  play a recorded event: e = { target, note, velocity }
    *                                                  (target is whatever the caller passed to capture(): here,
    *                                                  which sound played the note)
-   * @param {(accent: boolean) => void} [hooks.click] metronome click on each beat
+   * @param {(accent: boolean, time: number) => {stop: (t?: number) => void} | void} [hooks.click]
+   *        metronome click on a beat, booked ahead at `time` on the audio clock (returns something stoppable)
    * @param {() => void} [hooks.onChange]            state changed (for the UI)
    * @param {(line: string) => void} [hooks.log]
    * @param {(fn: () => void) => () => void} [hooks.every]  runs fn every few ms, returns a function that stops it
@@ -35,6 +36,8 @@ export class Looper {
     this.seq = 0;           // recording order: a note's on and off share its id
     this.sounding = new Map(); // key → { target, note, n }: notes the playback holds, n times
     this.stopTimer = null;
+    this.nextBeat = 0;      // index (from the loop's start) of the next beat whose click is not booked yet
+    this.booked = [];       // clicks booked ahead: { time, handle } (cancelled when the loop restarts or stops)
   }
 
   get beats() { return this.bars * 4; }
@@ -83,6 +86,7 @@ export class Looper {
     if (this.recording) this.finishLayer();
     if (!this.playing) return;
     this.playing = false;
+    this.cancelClicks();
     this.stopTimer?.();
     this.stopTimer = null;
     this.releaseAll();
@@ -98,6 +102,9 @@ export class Looper {
     this.lastPos = -1e-9; // so events at 0 play on the first tick
     this.lastPass = 0;
     this.playing = true;
+    this.cancelClicks();
+    this.nextBeat = 0;
+    this.bookClicks(); // the first beat's click right away, not on the first timer tick
     if (!this.stopTimer) this.stopTimer = this.every(() => this.tick());
   }
 
@@ -198,6 +205,7 @@ export class Looper {
   /** Plays the events whose time has come; call every few ms while playing. */
   tick() {
     if (!this.playing) return;
+    this.bookClicks();
     const { pass, pos } = this.clock();
     if (pass !== this.lastPass) {
       this.dispatch(this.lastPos, this.length, this.lastPass); // the end of the pass just finished
@@ -218,11 +226,32 @@ export class Looper {
         this.emit(e);
       }
     }
-    if (this.metronome) {
-      const beat = this.length / this.beats;
-      // beat 0 counts too: after a wrap `from` is just below 0
-      for (let b = Math.floor(from / beat) + 1; b * beat <= to && b < this.beats; b++) this.click(b % 4 === 0);
+  }
+
+  /**
+   * Books the metronome's clicks a little ahead at their exact times on the audio clock, as metronomes do:
+   * a click played when the timer happens to run would land a few to tens of milliseconds late, unevenly.
+   */
+  bookClicks() {
+    const LOOKAHEAD = 0.12; // seconds; well over the timer's interval and its usual delays
+    const beat = this.length / this.beats;
+    const now = this.now();
+    this.booked = this.booked.filter((c) => c.time > now - 0.1);
+    for (let t = this.start + this.nextBeat * beat; t <= now + LOOKAHEAD; t = this.start + this.nextBeat * beat) {
+      // a beat already gone (the tab was in the background) is skipped rather than clicked late
+      if (this.metronome && t >= now - 0.01) {
+        const handle = this.click(this.nextBeat % 4 === 0, Math.max(t, now));
+        if (handle) this.booked.push({ time: t, handle });
+      }
+      this.nextBeat++;
     }
+  }
+
+  /** Takes back the clicks booked ahead (the loop restarted or stopped, or the click was turned off). */
+  cancelClicks() {
+    const now = this.now();
+    for (const c of this.booked) if (c.time > now) c.handle.stop?.();
+    this.booked = [];
   }
 
   emit(e) {

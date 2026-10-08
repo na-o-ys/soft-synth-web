@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "preset": "soft-piano",
   "params": {"volume": 0.8},
   "presets": [
@@ -183,6 +183,86 @@
       {"coarse": 7, "level": 70, "r1": 99, "r2": 85, "r3": 60, "r4": 80, "l1": 99, "l2": 20, "l3": 0, "l4": 0, "velocity": 6},
       {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
       {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0}
+    ]}},
+    {"name": "FM kick", "engine": "fm", "group": "drums", "fm": {"name": "KICK", "algorithm": 5, "pr1": 99, "pr2": 99, "pr3": 99, "pr4": 0, "pl1": 50, "pl2": 50, "pl3": 50, "pl4": 84, "ops": [
+      {"coarse": 1, "level": 99, "r1": 99, "r2": 50, "r3": 40, "r4": 60, "l1": 99, "l2": 0, "l3": 0, "l4": 0, "velocity": 2},
+      {"coarse": 1, "level": 65, "r1": 99, "r2": 80, "r3": 40, "r4": 60, "l1": 99, "l2": 0, "l3": 0, "l4": 0, "velocity": 4},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0}
+    ]}},
+    {"name": "FM snare", "engine": "fm", "group": "drums", "fm": {"name": "SNARE", "algorithm": 31, "feedback": 7, "pr1": 99, "pr2": 99, "pr3": 99, "pr4": 0, "pl1": 50, "pl2": 50, "pl3": 50, "pl4": 60, "ops": [
+      {"coarse": 1, "level": 90, "r1": 99, "r2": 62, "r3": 40, "r4": 60, "l1": 99, "l2": 0, "l3": 0, "l4": 0, "velocity": 2},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 5, "level": 88, "r1": 99, "r2": 58, "r3": 40, "r4": 60, "l1": 99, "l2": 0, "l3": 0, "l4": 0, "velocity": 3},
+      {"coarse": 7, "level": 99, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0}
+    ]}},
+    {"name": "FM clap", "engine": "fm", "group": "drums", "fm": {"name": "CLAP", "algorithm": 31, "feedback": 7, "lfoWave": 3, "lfoSpeed": 99, "lfoAmd": 99, "lfoSync": 1, "ops": [
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 3, "level": 95, "r1": 99, "r2": 64, "r3": 40, "r4": 60, "l1": 99, "l2": 8, "l3": 0, "l4": 0, "ams": 3, "velocity": 3},
+      {"coarse": 7, "level": 99, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0}
+    ]}},
+    {"name": "FM hat closed", "engine": "fm", "group": "drums", "fm": {"name": "HAT CLOSED", "algorithm": 31, "feedback": 7, "ops": [
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 7, "level": 62, "r1": 99, "r2": 82, "r3": 40, "r4": 60, "l1": 99, "l2": 0, "l3": 0, "l4": 0, "fine": 41},
+      {"coarse": 11, "level": 97, "r1": 99, "r2": 78, "r3": 40, "r4": 60, "l1": 99, "l2": 0, "l3": 0, "l4": 0, "velocity": 4},
+      {"coarse": 13, "level": 99, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0, "fine": 50}
+    ]}},
+    {"name": "FM hat open", "engine": "fm", "group": "drums", "fm": {"name": "HAT OPEN", "algorithm": 31, "feedback": 7, "ops": [
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 7, "level": 62, "r1": 99, "r2": 52, "r3": 40, "r4": 60, "l1": 99, "l2": 0, "l3": 0, "l4": 0, "fine": 41},
+      {"coarse": 11, "level": 97, "r1": 99, "r2": 50, "r3": 40, "r4": 60, "l1": 99, "l2": 0, "l3": 0, "l4": 0, "velocity": 4},
+      {"coarse": 13, "level": 99, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0, "fine": 50}
+    ]}},
+    {"name": "FM crash", "engine": "fm", "group": "drums", "fm": {"name": "CRASH", "algorithm": 31, "feedback": 7, "ops": [
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 9, "level": 70, "r1": 99, "r2": 34, "r3": 40, "r4": 60, "l1": 99, "l2": 0, "l3": 0, "l4": 0, "fine": 21},
+      {"coarse": 7, "level": 70, "r1": 99, "r2": 36, "r3": 40, "r4": 60, "l1": 99, "l2": 0, "l3": 0, "l4": 0, "fine": 41},
+      {"coarse": 10, "level": 94, "r1": 99, "r2": 33, "r3": 40, "r4": 60, "l1": 99, "l2": 0, "l3": 0, "l4": 0, "velocity": 3},
+      {"coarse": 13, "level": 99, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0, "fine": 50}
+    ]}},
+    {"name": "FM rim", "engine": "fm", "group": "drums", "fm": {"name": "RIM", "algorithm": 5, "ops": [
+      {"coarse": 1, "level": 99, "r1": 99, "r2": 72, "r3": 40, "r4": 60, "l1": 99, "l2": 0, "l3": 0, "l4": 0, "velocity": 3},
+      {"coarse": 3, "level": 80, "r1": 99, "r2": 82, "r3": 40, "r4": 60, "l1": 99, "l2": 0, "l3": 0, "l4": 0, "fine": 50},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0}
+    ]}},
+    {"name": "FM tom", "engine": "fm", "group": "drums", "fm": {"name": "TOM", "algorithm": 5, "pr1": 99, "pr2": 99, "pr3": 99, "pr4": 0, "pl1": 50, "pl2": 50, "pl3": 50, "pl4": 68, "ops": [
+      {"coarse": 1, "level": 99, "r1": 99, "r2": 46, "r3": 40, "r4": 60, "l1": 99, "l2": 0, "l3": 0, "l4": 0, "velocity": 2},
+      {"coarse": 1, "level": 55, "r1": 99, "r2": 75, "r3": 40, "r4": 60, "l1": 99, "l2": 0, "l3": 0, "l4": 0, "velocity": 4},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0}
+    ]}},
+    {"name": "FM cowbell", "engine": "fm", "group": "drums", "fm": {"name": "COWBELL", "algorithm": 5, "ops": [
+      {"coarse": 1, "level": 99, "r1": 99, "r2": 62, "r3": 48, "r4": 60, "l1": 99, "l2": 30, "l3": 0, "l4": 0},
+      {"coarse": 2, "level": 72, "r1": 99, "r2": 62, "r3": 48, "r4": 60, "l1": 99, "l2": 30, "l3": 0, "l4": 0},
+      {"coarse": 1, "level": 92, "r1": 99, "r2": 62, "r3": 48, "r4": 60, "l1": 99, "l2": 30, "l3": 0, "l4": 0, "fine": 48},
+      {"coarse": 2, "level": 70, "r1": 99, "r2": 62, "r3": 48, "r4": 60, "l1": 99, "l2": 30, "l3": 0, "l4": 0},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0}
+    ]}},
+    {"name": "FM zap", "engine": "fm", "group": "drums", "fm": {"name": "ZAP", "algorithm": 5, "pr1": 80, "pr2": 99, "pr3": 99, "pr4": 0, "pl1": 50, "pl2": 50, "pl3": 50, "pl4": 99, "ops": [
+      {"coarse": 1, "level": 99, "r1": 99, "r2": 45, "r3": 40, "r4": 60, "l1": 99, "l2": 0, "l3": 0, "l4": 0},
+      {"coarse": 1, "level": 75, "r1": 99, "r2": 50, "r3": 40, "r4": 60, "l1": 99, "l2": 0, "l3": 0, "l4": 0},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0}
     ]}}
   ],
   "kits": [
@@ -208,6 +288,7 @@
         {"preset": "zap", "note": 48, "volume": 1},
         {"preset": "zap", "note": 60, "volume": 1}
       ]
-    }
+    },
+    {"name": "FM kit", "cols": 8, "rows": 2, "items": [{"preset": "FM hat closed", "note": 60, "volume": 1},{"preset": "FM hat open", "note": 60, "volume": 1},{"preset": "FM crash", "note": 60, "volume": 1},{"preset": "FM rim", "note": 72, "volume": 1},{"preset": "FM tom", "note": 43, "volume": 1},{"preset": "FM tom", "note": 48, "volume": 1},{"preset": "FM tom", "note": 53, "volume": 1},{"preset": "FM cowbell", "note": 73, "volume": 1},{"preset": "FM kick", "note": 36, "volume": 1},{"preset": "FM snare", "note": 55, "volume": 1},{"preset": "FM clap", "note": 60, "volume": 1},{"preset": "FM hat closed", "note": 60, "volume": 0.6},{"preset": "FM kick", "note": 31, "volume": 1},{"preset": "FM snare", "note": 62, "volume": 1},{"preset": "FM zap", "note": 48, "volume": 1},{"preset": "FM zap", "note": 60, "volume": 1}]}
   ]
 }

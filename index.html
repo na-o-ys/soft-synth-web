@@ -87,6 +87,10 @@
         <button id="ble-connect" type="button">Connect Bluetooth MIDI keyboard</button>
         <span id="ble-status" class="muted"></span>
       </div>
+      <div class="row native-sync" title="The native soft-synth app (always on, no browser) then plays what the Play screen plays: the keys sound, the pad drums, the knobs, and the slots. Turn it off and the app goes back to its own config file.">
+        <label><input type="checkbox" id="native-sync"> Send the Play screen to the soft-synth app</label>
+        <span id="native-sync-status" class="muted"></span>
+      </div>
     </section>
     <div class="surface" id="surface"></div>
     <!-- the FM page: algorithm, voice-wide sections, six operators -->

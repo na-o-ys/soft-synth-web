@@ -8,7 +8,9 @@ import {
   AMS, PITCH_LEVELS, PITCH_RATES, PMS, levelScaling, lfoDelaySeconds, scaleOutLevel, scaleRate, scaleVelocity,
 } from './tables.js';
 
-const MAX_VOICES = 16;
+const POLYPHONY = 24; // notes sounding at once
+const SLOTS = 32;     // voices, so a note cut short can fade out while the new one starts in another slot
+const FADE = 0.005;   // seconds a cut-short voice takes to fade out (an instant cut clicks)
 const BLOCK = 32; // envelopes, LFO, and pitch update every 32 samples; gains are interpolated in between
 const SINE_SIZE = 4096;
 const SINE = new Float32Array(SINE_SIZE + 1);
@@ -144,6 +146,8 @@ class Voice {
     this.gain = new Float64Array(6); // current linear gain per op (end of the last block)
     this.pitch = 0;  // octaves above A4 of the key (glides in mono mode)
     this.pitchTarget = 0;
+    this.fading = false; // cut short (stolen, panic): fading out over FADE, then free
+    this.fade = 1;
   }
 }
 
@@ -201,7 +205,8 @@ class FmSynthProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
     this.sr = sampleRate;
-    this.voices = Array.from({ length: MAX_VOICES }, () => new Voice());
+    this.voices = Array.from({ length: SLOTS }, () => new Voice());
+    this.fadeStep = 1 / (FADE * this.sr);
     this.voice = initVoice();
     this.perf = { ...PERF_DEFAULTS, opOn: initOpOn() };
     this.reverb = new Reverb(this.sr);
@@ -244,7 +249,7 @@ class FmSynthProcessor extends AudioWorkletProcessor {
       case 'modWheel': this.modWheel = m.value; break;
       case 'aftertouch': this.aftertouch = m.value; break;
       case 'allNotesOff':
-        for (const v of this.voices) { v.active = false; v.held = false; v.sustained = false; for (const env of v.envs) { env.stage = 4; env.level = 0; } }
+        for (const v of this.voices) if (v.active) this.cut(v);
         this.heldKeys = [];
         break;
     }
@@ -294,16 +299,30 @@ class FmSynthProcessor extends AudioWorkletProcessor {
         this.configureVoice(v);
         return;
       }
-      for (const other of this.voices) if (other !== v) other.active = false;
+      for (const other of this.voices) if (other !== v && other.active) this.cut(other);
       return this.startVoice(v, key, velocity, v.active);
     }
-    // the same key again: retrigger its voice; otherwise a free voice, else the oldest released, else the oldest
-    let v = this.voices.find((x) => x.active && x.key === key);
-    const retrigger = !!v;
-    if (!v) v = this.voices.find((x) => !x.active);
-    if (!v) v = this.voices.filter((x) => !x.held).sort((a, b) => a.age - b.age)[0];
-    if (!v) v = [...this.voices].sort((a, b) => a.age - b.age)[0];
-    this.startVoice(v, key, velocity, retrigger || v.active);
+    // the same key again: retrigger its voice (it carries on from where it is, no click)
+    const same = this.voices.find((x) => x.active && !x.fading && x.key === key);
+    if (same) return this.startVoice(same, key, velocity, true);
+    // at the polyphony limit, the oldest released note (else the oldest note) fades out to make room
+    const sounding = this.voices.filter((x) => x.active && !x.fading);
+    if (sounding.length >= POLYPHONY) {
+      const released = sounding.filter((x) => !x.held);
+      const victim = (released.length ? released : sounding).reduce((a, b) => (a.age < b.age ? a : b));
+      this.cut(victim);
+    }
+    // a free slot; if every slot is busy (only with very fast playing), the most faded-out one
+    const v = this.voices.find((x) => !x.active) ?? this.voices.filter((x) => x.fading).reduce((a, b) => (a.fade < b.fade ? a : b));
+    this.startVoice(v, key, velocity, false);
+  }
+
+  /** Ends a voice early without a click: it fades out over a few milliseconds. */
+  cut(v) {
+    if (v.fading) return;
+    v.fading = true;
+    v.held = false;
+    v.sustained = false;
   }
 
   startVoice(v, key, velocity, wasActive) {
@@ -312,6 +331,8 @@ class FmSynthProcessor extends AudioWorkletProcessor {
     v.age = this.counter++;
     v.held = true;
     v.sustained = false;
+    v.fading = false;
+    v.fade = 1;
     const glideFrom = wasActive ? v.pitch : this.lastPitch;
     v.pitchTarget = this.keyPitch(key);
     v.pitch = this.perf.mono && this.perf.portamento && glideFrom !== undefined ? glideFrom : v.pitchTarget;
@@ -320,8 +341,11 @@ class FmSynthProcessor extends AudioWorkletProcessor {
       for (const env of v.envs) env.level = 0;
       v.fb.fill(0);
       v.gain.fill(0);
+      v.out.fill(0);
+      // a new note starts at phase 0 with osc key sync, else wherever the oscillators were (free-running);
+      // a note still sounding always carries on, or its wave would jump (a click)
+      if (this.voice.oscSync) v.phase.fill(0);
     }
-    if (this.voice.oscSync || !wasActive) v.phase.fill(0); // key sync: every op starts at phase 0
     v.active = true;
     this.configureVoice(v);
     for (const env of v.envs) env.start();
@@ -342,7 +366,7 @@ class FmSynthProcessor extends AudioWorkletProcessor {
       }
     }
     for (const v of this.voices) {
-      if (!v.active || v.key !== key || !v.held) continue;
+      if (!v.active || v.fading || v.key !== key || !v.held) continue;
       v.held = false;
       if (this.sustainDown) v.sustained = true;
       else this.releaseVoice(v);
@@ -463,6 +487,8 @@ class FmSynthProcessor extends AudioWorkletProcessor {
       }
       if (!alive) { v.active = false; continue; }
       const phase = v.phase, outs = v.out, fb = v.fb;
+      let fade = v.fade;
+      const fadeStep = v.fading ? this.fadeStep : 0;
       for (let f = 0; f < n; f++) {
         let sum = 0;
         for (let i = 5; i >= 0; i--) {
@@ -479,8 +505,11 @@ class FmSynthProcessor extends AudioWorkletProcessor {
         }
         fb[1] = fb[0];
         fb[0] = outs[fbFrom - 1];
-        L[start + f] += sum * vol;
+        L[start + f] += sum * vol * fade;
+        if (fadeStep && (fade -= fadeStep) <= 0) { fade = 0; break; }
       }
+      v.fade = fade;
+      if (v.fading && fade <= 0) { v.active = false; v.fading = false; }
     }
   }
 

@@ -126,7 +126,7 @@ function fmPerf(p) {
  * hooks.getConfig(): the current config (presets); hooks.save(performances): persist; surface: the controller surface;
  * hooks.onKeysNote(note, on): light the on-screen keyboard; hooks.startAudio(); hooks.log().
  */
-export function mountPlay(root, { stored, surface, getConfig, save, saveKit, deleteKit, onKeysNote, onTransportChange = () => {}, startAudio, log }) {
+export function mountPlay(root, { stored, surface, getConfig, save, saveKit, deleteKit, onKeysNote, onTransportChange = () => {}, onStateChange = () => {}, startAudio, log }) {
   let config = getConfig();
   let presetNames = config.presets.map((p) => p.name);
   let performances = (Array.isArray(stored) && stored.length ? stored : [newPerformance('performance 1', presetNames[0], surface.layout.rows, surface.layout.cols)])
@@ -162,6 +162,7 @@ export function mountPlay(root, { stored, surface, getConfig, save, saveKit, del
       parts.get(id).load(presetSound(config, preset));
     }
     perf().knobs.forEach((k, i) => { if (k.param && k.value !== null) applyKnob(i, k.value); });
+    onStateChange();
   }
 
   const targetParts = (target) => [...parts].filter(([id]) =>
@@ -266,19 +267,46 @@ export function mountPlay(root, { stored, surface, getConfig, save, saveKit, del
 
   // MARK: loop
 
-  /** Metronome: a short blip straight to the output. */
-  function clickSound(accent) {
-    if (!audio) return;
+  // Metronome: a woodblock-like "tock" (a fast-decaying tone with a tiny noise attack), which cuts through
+  // what is being played better than a soft sine blip; the first beat of the bar is higher and louder.
+  const CLICK_KEY = 'soft-synth-web:click-volume';
+  let clickVolume = 70; // 0–100
+  try { const v = Number(localStorage.getItem(CLICK_KEY)); if (localStorage.getItem(CLICK_KEY) !== null && Number.isFinite(v)) clickVolume = Math.min(Math.max(v, 0), 100); } catch { /* default */ }
+  const clickBuffers = new Map(); // "rate:accent" → AudioBuffer
+
+  function clickBuffer(context, accent) {
+    const key = `${context.sampleRate}:${accent}`;
+    if (!clickBuffers.has(key)) {
+      const sr = context.sampleRate, n = Math.round(sr * 0.08);
+      const buf = context.createBuffer(1, n, sr);
+      const d = buf.getChannelData(0);
+      const f = accent ? 1600 : 1150;
+      let peak = 0;
+      for (let i = 0; i < n; i++) {
+        const t = i / sr;
+        d[i] = Math.sin(2 * Math.PI * f * t) * Math.exp(-t / 0.014) + (Math.random() * 2 - 1) * 0.6 * Math.exp(-t / 0.0015);
+        peak = Math.max(peak, Math.abs(d[i]));
+      }
+      for (let i = 0; i < n; i++) d[i] /= peak;
+      clickBuffers.set(key, buf);
+    }
+    return clickBuffers.get(key);
+  }
+
+  /** Plays a click at `time` on the audio clock (booked ahead by the looper); returns the source, to cancel it. */
+  function clickSound(accent, time) {
+    if (!audio || clickVolume === 0) return null;
     const { context } = audio;
-    const t = context.currentTime;
-    const osc = context.createOscillator();
-    const gain = context.createGain();
-    osc.frequency.value = accent ? 1760 : 1320;
-    gain.gain.setValueAtTime(accent ? 0.25 : 0.15, t);
-    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.04);
-    osc.connect(gain).connect(audio.destination);
-    osc.start(t);
-    osc.stop(t + 0.05);
+    const src = new AudioBufferSourceNode(context, { buffer: clickBuffer(context, accent) });
+    const gain = new GainNode(context, { gain: (clickVolume / 100) ** 2 * (accent ? 0.9 : 0.6) });
+    src.connect(gain).connect(audio.destination);
+    src.start(Math.max(time ?? 0, context.currentTime));
+    return src;
+  }
+
+  function setClickVolume(v) {
+    clickVolume = Math.min(Math.max(Math.round(v), 0), 100);
+    try { localStorage.setItem(CLICK_KEY, String(clickVolume)); } catch { /* not essential */ }
   }
 
   const looper = new Looper({
@@ -379,6 +407,7 @@ export function mountPlay(root, { stored, surface, getConfig, save, saveKit, del
       case 'undo': looper.undo(); break;
       case 'click':
         looper.metronome = !looper.metronome;
+        if (!looper.metronome) looper.cancelClicks();
         log(`click ${looper.metronome ? 'on' : 'off'}`);
         looper.onChange();
         break;
@@ -424,6 +453,50 @@ export function mountPlay(root, { stored, surface, getConfig, save, saveKit, del
   function persist() {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => save(performances), 300);
+    onStateChange();
+  }
+
+  // MARK: the native app
+
+  /**
+   * This screen's state for the native soft-synth app (its "Play state" sync): every sound resolved to its
+   * engine and values with the knobs applied, and the controller's pads, knobs, and sliders resolved to the
+   * MIDI messages they send. The app then plays the same thing without the browser.
+   */
+  function exportState() {
+    const knobValues = (target) => Object.fromEntries(perf().knobs
+      .filter((k) => k.param && k.value !== null && (k.target === 'all' || k.target === target))
+      .map((k) => [k.param, k.value]));
+    const sound = (name, target) => {
+      const s = presetSound(config, name);
+      const params = { ...s.params, ...knobValues(target) };
+      return s.engine === 'fm' ? { engine: 'fm', name, voice: s.voice, params } : { engine: 'analog', name, params, partials: s.partials };
+    };
+    const src = (s) => (s ? { type: s.type, channel: s.channel, number: s.number ?? 0 } : null);
+    const { cols, rows, items } = perf().pads;
+    const parts = {};
+    const pads = [];
+    surface.pads.forEach((source, i) => {
+      if (!source || source.type !== 'note') return;
+      const row = Math.floor(i / surface.layout.cols), col = i % surface.layout.cols;
+      const a = config.play.find((c) => c.source.type === 'pad' && c.source.row === row && c.source.col === col);
+      if (a) return pads.push(a.target.kind === 'slot' ? { src: src(source), slot: a.target.slot } : { src: src(source) });
+      const item = row < rows && col < cols ? items[row * cols + col] : null;
+      if (!item?.preset) return pads.push({ src: src(source) });
+      parts[`preset:${item.preset}`] ??= sound(item.preset, 'pads');
+      pads.push({ src: src(source), part: `preset:${item.preset}`, note: item.note, volume: item.volume });
+    });
+    const knobs = perf().knobs.map((k, i) => {
+      const source = surface.knobs[i];
+      const spec = SPECS[k.param];
+      if (!source || !spec) return null;
+      return { src: src(source), target: k.target, param: k.param, min: spec.min, max: spec.max, exp: !!spec.exp, zero: !!spec.zero, step: spec.step ?? 0 };
+    }).filter(Boolean);
+    const sliders = config.play.filter((c) => c.source.type === 'slider' && c.target.kind === 'param' && surface.sliders[c.source.index])
+      .map((c) => ({ src: src(surface.sliders[c.source.index]), param: c.target.param, min: c.target.min, max: c.target.max,
+        exp: !!c.target.exponential, step: c.target.step ?? 0 }));
+    const slots = Array.from({ length: slotCount(config) }, (_, i) => (perf().slots[i] ? sound(perf().slots[i], 'keys') : null));
+    return { keys: sound(perf().keys.preset, 'keys'), parts, pads, knobs, sliders, slots };
   }
 
   // MARK: view
@@ -446,7 +519,7 @@ export function mountPlay(root, { stored, surface, getConfig, save, saveKit, del
     };
     const drums = config.presets.filter((p) => p.group === 'drums');
     const sounds = config.presets.filter((p) => p.group !== 'drums' && p.engine !== 'fm');
-    const fm = config.presets.filter((p) => p.engine === 'fm');
+    const fm = config.presets.filter((p) => p.group !== 'drums' && p.engine === 'fm');
     if (drumsFirst) { group('drums', drums); group('sounds', sounds); group('FM', fm); } else { group('sounds', sounds); group('FM', fm); group('drums', drums); }
     s.value = value ?? '';
     return s;
@@ -702,7 +775,10 @@ export function mountPlay(root, { stored, surface, getConfig, save, saveKit, del
         el('label', { className: 'play-size' }, 'bpm', tempo),
         bars,
         check('quantize 1/16', L.quantize, (v) => { L.quantize = v; }),
-        check('click', L.metronome, (v) => { L.metronome = v; }),
+        check('click', L.metronome, (v) => { L.metronome = v; if (!v) L.cancelClicks(); }),
+        el('label', { className: 'play-size', title: 'Click volume (apart from what you play; the master volume applies too)' }, 'click vol',
+          el('input', { type: 'range', min: 0, max: 100, step: 1, value: clickVolume, className: 'click-volume',
+            oninput: (e) => setClickVolume(Number(e.target.value)) })),
         el('span', { className: 'strip-note', textContent: L.locked ? 'layers:' : 'tempo and length are set until the first layer' }),
         ...layers));
   }
@@ -717,6 +793,7 @@ export function mountPlay(root, { stored, surface, getConfig, save, saveKit, del
     handle,
     handleSurface,
     transport,
+    exportState,
     /** What the transport LEDs show on this screen. */
     get transportState() {
       return { playing: looper.playing, recording: !!looper.recording, cycle: false, track: activeSlot() };

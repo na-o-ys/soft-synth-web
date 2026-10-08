@@ -87,7 +87,9 @@ fixed once something is recorded.
   one layer; clicking a layer mutes it. **↶ Undo** takes back the last recorded note, one note per press.
 - **▶ Play** plays from the top and **■ Stop** stops; pressed while recording, both keep the take first.
   **Clear** removes every layer.
-- **quantize 1/16** snaps each recorded note to the nearest sixteenth (keeping its length); **click** is a metronome.
+- **quantize 1/16** snaps each recorded note to the nearest sixteenth (keeping its length); **click** is a metronome: a
+  woodblock-like tock, higher and louder on the first beat of the bar, timed ahead on the audio clock so it never
+  drifts; **click vol** sets its level apart from what you play (remembered in this browser).
 - Each recorded note keeps the sound it was played with (the preset and the virtual knobs at that moment), so
   changing the keys preset, a pad, or a knob afterwards does not change what is already in the loop. Loops are
   not saved yet (a reload clears them).
@@ -417,7 +419,18 @@ so use USB for the MCP bank. The template's `inputs` also drop the keyboard's "P
 every key (it is the port for the keyboard's settings).
 
 The top row sends press and release at once, so it works as buttons only. If the keyboard is connected over USB
-and Bluetooth at the same time, each key arrives twice: use one connection.
+and Bluetooth at the same time (the native soft-synth keeps Bluetooth connected), the Bluetooth port is ignored
+while the USB ports are there, so nothing arrives twice; unplug USB and Bluetooth takes over.
+
+## The native app
+
+The always-on macOS app [soft-synth](https://github.com/na-o-ys/soft-synth) runs the same two engines (Analog and
+FM, ported to Swift) and can **follow the Play screen**: on the **Setup** screen, turn on *Send the Play screen to
+the soft-synth app*. Whenever the Play screen changes, its state — the keys sound, the pads' drums, the knobs and
+their values, the sliders, the slots, dropped inputs, and the master volume — goes to the app's virtual MIDI input
+"soft-synth" as one SysEx message (`F0 7D 53 53 59 4E 01 <JSON> F7`), and the app plays the same without the
+browser, also after a restart. Turning it off sends the app back to its own config file. Needs MIDI with SysEx
+allowed (the browser asks once).
 
 ## FM
 
@@ -438,6 +451,10 @@ The **FM** button opens a DX7-style 6-operator FM synth (requirements: [docs/fm-
   in one file, or a bare 4096-byte bank. The bank window auditions voices on your keyboard (Close puts your
   sound back, Keep stays), and Import copies ticked voices into the library. **Export** saves the current voice,
   or a bank of your FM presets.
+- **FM drums**: kick, snare, clap, closed / open hat, crash, rim, tom, cowbell, zap (`"group": "drums"`), and an
+  **FM kit** with the synth kit's layout — load it on the Play screen's pads, or mix FM and Analog drums.
+- 24 notes at once; a note cut short (voice stealing, Panic, switching pages) fades out over 5 ms instead of
+  clicking, and a key struck again while still sounding carries on from where it is.
 - Presets live in the same library as the subtractive ones (`"engine": "fm"`, the voice under `"fm"`); names
   are unique across both. The Analog page lists only subtractive presets, the FM page only FM ones, Play both.
 - Knob pages for the controller: OP (the selected operator), OP EG, OP SCALE, LEVELS (all six output levels),
@@ -473,6 +490,7 @@ The **FM** button opens a DX7-style 6-operator FM synth (requirements: [docs/fm-
 | `src/fm/fm-page.js` / `src/fm/fm-app.js` | the FM page's panel / its controller (edit buffer, presets, MIDI, knob pages, .syx) |
 | `src/fm/fm-lessons.js` | the FM course |
 | `test/dx7.test.mjs` | `node --test test/*.test.mjs`: sysex round trips, header variants, algorithm table |
+| `src/native-sync.js` | sends the Play screen to the native soft-synth app (SysEx to its virtual MIDI input) |
 | `src/main.js` | the page: wiring and UI |
 
 ## Differences from the native version

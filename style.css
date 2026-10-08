@@ -704,3 +704,4 @@ body.mode-fm .edit-only { display: none !important; }
 .master { display: inline-flex; align-items: center; gap: 6px; }
 .master input[type=range] { width: 96px; accent-color: var(--amber); }
 .master output { min-width: 3ch; text-align: right; font-variant-numeric: tabular-nums; }
+.play-loop .click-volume { width: 90px; accent-color: var(--amber); }

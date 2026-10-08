@@ -418,7 +418,9 @@ export function parseLibrary(root) {
     }).filter(Boolean);
     if (!lib.presets.length) lib.presets = BUILTIN.presets;
   }
-  const names = new Set(lib.presets.map((p) => p.name));
+  // kits may use FM presets too (the Play screen plays them)
+  const fmNames = Array.isArray(root.presets) ? root.presets.filter((p) => isObject(p) && p.engine === 'fm' && typeof p.name === 'string').map((p) => p.name) : [];
+  const names = new Set([...lib.presets.map((p) => p.name), ...fmNames]);
   if (lib.initialPreset !== null && !names.has(lib.initialPreset)) lib.initialPreset = null;
   if (root.kits !== undefined) {
     if (!Array.isArray(root.kits)) fail('kits: must be an array of objects');

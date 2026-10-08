@@ -38,7 +38,7 @@ export class WebMIDIInput {
   attach() {
     for (const input of this.access.inputs.values()) {
       input.onmidimessage = (e) => {
-        if (this.isIgnored(input.name)) return;
+        if (this.ignoreReason(input.name)) return;
         const status = e.data[0];
         // channel messages, SysEx, and the transport realtime messages (Start / Continue / Stop; not the clock)
         if (status <= 0xf0 || status === 0xfa || status === 0xfb || status === 0xfc) this.onMessage(Array.from(e.data), input.name);
@@ -47,9 +47,26 @@ export class WebMIDIInput {
     this.onDevicesChange();
   }
 
-  isIgnored(name) {
-    for (const n of this.ignoredNames) if (name?.includes(n)) return true;
-    return false;
+  /**
+   * Why an input's messages are dropped, or null. A keyboard connected over both USB and Bluetooth sends
+   * everything twice (two notes per key, a button "pressed" twice — record starts and stops at once), so while
+   * its USB ports are there the Bluetooth one is ignored. macOS names a Bluetooth MIDI port "<device> Bluetooth"
+   * and the USB ports carry the device name too (e.g. "SMK25II Bluetooth" / "SINCO SMK25II-Master").
+   */
+  ignoreReason(name) {
+    for (const n of this.ignoredNames) if (name?.includes(n)) return 'connected directly over Bluetooth';
+    const device = /^(.+?)\s+bluetooth$/i.exec(name ?? '')?.[1];
+    if (device && this.access) {
+      const usb = [...this.access.inputs.values()].find((i) => i.name !== name && i.state === 'connected' && i.name?.includes(device));
+      if (usb) return `the same keyboard is connected over USB (${usb.name})`;
+    }
+    return null;
+  }
+
+  /** The output called exactly `name`, or null. */
+  outputNamed(name) {
+    if (!this.access) return null;
+    return [...this.access.outputs.values()].find((o) => o.name === name && o.state !== 'disconnected') ?? null;
   }
 
   /** The output whose name contains `part` (e.g. to light a Mackie surface's buttons), or null. */
@@ -61,7 +78,7 @@ export class WebMIDIInput {
   get inputs() {
     if (!this.access) return [];
     return [...this.access.inputs.values()].map((i) => ({
-      name: i.name, state: i.state, ignored: this.isIgnored(i.name),
+      name: i.name, state: i.state, ignored: this.ignoreReason(i.name),
     }));
   }
 }
