@@ -1,11 +1,13 @@
 // The Play screen: perform with several sounds at once. A performance puts one preset on the keyboard,
 // presets on a grid of virtual pads, and parameters on a row of virtual knobs. Physical pads and knobs
-// are linked to the virtual ones by MIDI learn, so any controller works.
+// follow the controller surface (see surface.js): virtual pad r-c plays the pad at row r, column c, and
+// virtual knob k moves knob k. The config's "play" list gives pads and sliders other jobs (slots, the loop).
 //
 // Each distinct preset in use runs as its own synth ("part"): the keys part plus one part per preset
 // on the pads. Pads sharing a preset share its part.
 import { CHOICES, MAX_SLOTS, presetSound, slotCount } from './config.js';
 import { Knob, MODULES, SPECS } from './panel.js';
+import { Looper } from './looper.js';
 
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 const noteName = (n) => `${NOTE_NAMES[((n % 12) + 12) % 12]}${Math.floor(n / 12) - 1}`;
@@ -23,11 +25,11 @@ const DEFAULT_KNOBS = [
   ['all', 'delay'], ['all', 'reverb'], ['keys', 'volume'], ['pads', 'volume'],
 ];
 
-function newPerformance(name, keysPreset) {
+function newPerformance(name, keysPreset, rows = 4, cols = 4) {
   return {
     name,
     keys: { preset: keysPreset },
-    pads: { cols: 4, rows: 4, items: [] },
+    pads: { cols, rows, items: [] }, // new performances take the controller's pad grid
     knobs: DEFAULT_KNOBS.map(([target, param]) => ({ target, param, value: null })),
     slots: [],
   };
@@ -59,20 +61,29 @@ function sanitize(perf, presetNames, fallbackPreset) {
   };
 }
 
-const sameSource = (a, b) => a && b && a.type === b.type && a.number === b.number && a.channel === b.channel;
 const describe = (s) => (s ? `${s.type === 'note' ? noteName(s.number) : `cc ${s.number}`} ch${s.channel + 1}` : '');
 
 // MARK: parts (one synth per preset in use)
 
 class Part {
   constructor(context, destination) {
-    this.node = new AudioWorkletNode(context, 'soft-synth', { numberOfInputs: 0, outputChannelCount: [2] });
-    this.node.connect(destination);
+    this.context = context;
+    this.destination = destination;
+    this.engine = null;
     this.sound = null;
     this.overrides = {};
   }
 
+  /** The part's synth follows its preset's engine: 'soft-synth' (subtractive) or 'fm-synth' (FM, src/fm). */
   load(sound) {
+    const engine = sound.engine === 'fm' ? 'fm' : 'synth';
+    if (engine !== this.engine) {
+      this.node?.port.postMessage({ type: 'allNotesOff' });
+      this.node?.disconnect();
+      this.node = new AudioWorkletNode(this.context, engine === 'fm' ? 'fm-synth' : 'soft-synth', { numberOfInputs: 0, outputChannelCount: [2] });
+      this.node.connect(this.destination);
+      this.engine = engine;
+    }
     this.sound = sound;
     this.push();
   }
@@ -84,39 +95,44 @@ class Part {
 
   push() {
     if (!this.sound) return;
+    if (this.engine === 'fm') return this.node.port.postMessage({ type: 'voice', voice: this.sound.voice, perf: fmPerf({ ...this.sound.params, ...this.overrides }) });
     this.node.port.postMessage({ type: 'params', params: { ...this.sound.params, ...this.overrides }, partials: this.sound.partials });
   }
 
   send(msg) {
-    this.node.port.postMessage(msg);
+    this.node?.port.postMessage(msg);
   }
 
   dispose() {
     this.send({ type: 'allNotesOff' });
-    this.node.disconnect();
+    this.node?.disconnect();
   }
+}
+
+/**
+ * The Play knobs speak the subtractive panel's parameters; an FM part takes the ones that mean something to it:
+ * volume, reverb, mod wheel, transpose, bend, and "brightness" (brightness and cutoff both turn the modulators
+ * up or down, which is what makes an FM sound brighter or darker).
+ */
+function fmPerf(p) {
+  const bright = ((p.brightness ?? 1) - 1) * 30 + Math.log2(Math.min(20000, p.cutoff ?? 20000) / 20000) * 5;
+  return { volume: p.volume ?? 0.8, reverb: (p.reverb ?? 0.15) * 0.7, modWheel: Math.min(1, (p.modWheel ?? 0) * 2), shift: p.transpose ?? 0, bendSemis: p.bend ?? 0, brightness: Math.round(bright) };
 }
 
 // MARK: the screen
 
 /**
  * Mounts the Play screen into `root`.
- * hooks.getConfig(): the current config (presets); hooks.save(performances, links): persist;
+ * hooks.getConfig(): the current config (presets); hooks.save(performances): persist; surface: the controller surface;
  * hooks.onKeysNote(note, on): light the on-screen keyboard; hooks.startAudio(); hooks.log().
  */
-export function mountPlay(root, { stored, links: storedLinks, getConfig, save, onKeysNote, midiInputs, startAudio, log }) {
+export function mountPlay(root, { stored, surface, getConfig, save, saveKit, deleteKit, onKeysNote, onTransportChange = () => {}, startAudio, log }) {
   let config = getConfig();
   let presetNames = config.presets.map((p) => p.name);
-  let performances = (Array.isArray(stored) && stored.length ? stored : [newPerformance('performance 1', presetNames[0])])
+  let performances = (Array.isArray(stored) && stored.length ? stored : [newPerformance('performance 1', presetNames[0], surface.layout.rows, surface.layout.cols)])
     .map((p) => sanitize(p, presetNames, presetNames[0]));
-  // which physical control drives each virtual pad / knob (shared by all performances)
-  let links = { pads: [...(storedLinks?.pads ?? [])], knobs: [...(storedLinks?.knobs ?? [])] };
   let current = 0;
   let selected = { kind: 'pad', index: 0 };
-  let learning = false;
-  // while learning: the virtual pad and knob the next new physical pad / knob will link to.
-  // forced = chosen by clicking it, so it may take over a control that is already linked elsewhere
-  let learnNext = { pads: null, knobs: null };
   let audio = null; // { context, destination } once audio has started
   const parts = new Map(); // part id ('keys' or 'preset:<name>') → Part
   const knobControls = [];
@@ -163,12 +179,82 @@ export function mountPlay(root, { stored, links: storedLinks, getConfig, save, o
     return presetSound(config, preset ?? perf().keys.preset).params[k.param];
   }
 
+  /** A note played live on the keys: sounds, and goes into the loop if it is recording. */
   function keysNote(note, on, velocity = 100) {
+    keysSound(note, on, velocity);
+    recordNote(`keys:${note}`, () => loopSound('keys', null, perf().keys.preset, parts.get('keys')), note, on, velocity);
+  }
+
+  function padNote(i, on, velocity = 100) {
+    const pad = perf().pads.items[i];
+    if (!pad?.preset) return;
+    padSound(i, on, velocity);
+    recordNote(`pad:${i}`, () => loopSound('pad', i, pad.preset, parts.get(`preset:${pad.preset}`)),
+      pad.note, on, on ? Math.max(1, Math.round(velocity * pad.volume)) : 0);
+  }
+
+  // A recorded note keeps the sound it was played with (preset and knob settings at that moment),
+  // so changing the keys preset, a pad, or a knob later does not change the loop.
+  const loopSounds = new Map(); // sound id → { kind: 'keys' | 'pad', pad, preset, overrides }
+  const loopParts = new Map();  // sound id → Part that plays the loop's notes in that sound
+  const liveSound = new Map();  // held live note → sound id it was recorded with (its note-off uses the same)
+
+  function loopSound(kind, pad, preset, part) {
+    const overrides = { ...(part?.overrides ?? {}) };
+    const id = JSON.stringify([kind, pad, preset, overrides]);
+    if (!loopSounds.has(id)) loopSounds.set(id, { kind, pad, preset, overrides });
+    return id;
+  }
+
+  function recordNote(liveKey, sound, note, on, velocity) {
+    if (!looper.recording) return;
+    let id;
+    if (on) {
+      id = sound();
+      liveSound.set(liveKey, id);
+    } else {
+      id = liveSound.get(liveKey);
+      liveSound.delete(liveKey);
+      if (id === undefined) return;
+    }
+    looper.capture(id, note, on, velocity);
+  }
+
+  function loopPart(id) {
+    if (!audio) return null;
+    let part = loopParts.get(id);
+    if (!part) {
+      const s = loopSounds.get(id);
+      part = new Part(audio.context, audio.destination);
+      part.overrides = { ...s.overrides };
+      part.load(presetSound(config, s.preset));
+      loopParts.set(id, part);
+    }
+    return part;
+  }
+
+  /** Plays a note from the loop in its recorded sound, lighting the key or pad it came from. */
+  function loopTrigger(e, on) {
+    const s = loopSounds.get(e.target);
+    if (!s) return;
+    loopPart(e.target)?.send(on ? { type: 'noteOn', key: e.note, velocity: e.velocity } : { type: 'noteOff', key: e.note });
+    if (s.kind === 'keys') onKeysNote(e.note, on);
+    else root.querySelectorAll('.pad')[s.pad]?.classList.toggle('hit', on);
+  }
+
+  /** Frees the synths of sounds no layer uses any more (after undo / clear). */
+  function pruneLoopSounds() {
+    const used = looper.targets;
+    for (const [id, part] of loopParts) if (!used.has(id)) { part.dispose(); loopParts.delete(id); }
+    for (const id of loopSounds.keys()) if (!used.has(id)) loopSounds.delete(id);
+  }
+
+  function keysSound(note, on, velocity) {
     parts.get('keys')?.send(on ? { type: 'noteOn', key: note, velocity } : { type: 'noteOff', key: note });
     onKeysNote(note, on);
   }
 
-  function padNote(i, on, velocity = 100) {
+  function padSound(i, on, velocity) {
     const pad = perf().pads.items[i];
     if (!pad?.preset) return;
     const part = parts.get(`preset:${pad.preset}`);
@@ -178,46 +264,84 @@ export function mountPlay(root, { stored, links: storedLinks, getConfig, save, o
     el?.classList.toggle('hit', on);
   }
 
+  // MARK: loop
+
+  /** Metronome: a short blip straight to the output. */
+  function clickSound(accent) {
+    if (!audio) return;
+    const { context } = audio;
+    const t = context.currentTime;
+    const osc = context.createOscillator();
+    const gain = context.createGain();
+    osc.frequency.value = accent ? 1760 : 1320;
+    gain.gain.setValueAtTime(accent ? 0.25 : 0.15, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.04);
+    osc.connect(gain).connect(audio.destination);
+    osc.start(t);
+    osc.stop(t + 0.05);
+  }
+
+  const looper = new Looper({
+    now: () => (audio ? audio.context.currentTime : performance.now() / 1000),
+    trigger: loopTrigger,
+    click: clickSound,
+    onChange: () => {
+      if (!looper.recording) pruneLoopSounds();
+      root.querySelector('.play-loop')?.replaceWith(renderLoop());
+      onTransportChange();
+    },
+    log,
+  });
+
+  // the loop position display follows the clock without redrawing the section
+  let frame = 0;
+  (function follow() {
+    const pos = root.querySelector('.loop-pos');
+    if (pos) {
+      const d = looper.display;
+      pos.textContent = `${d.bar}.${d.beat}`;
+      root.querySelector('.loop-fill').style.width = `${(d.progress * 100).toFixed(1)}%`;
+    }
+    frame = requestAnimationFrame(follow);
+  })();
+
   // MARK: MIDI
 
-  /** Handles one MIDI message while the Play screen is active. */
-  function handle(status, d1, d2) {
-    const kind = status & 0xf0, channel = status & 0x0f;
-    if (learning) showLastMidi(status, d1, d2);
-    const noteOn = kind === 0x90 && d2 > 0, noteOff = kind === 0x80 || (kind === 0x90 && d2 === 0);
-
-    // controls the config maps to preset slots switch the keys sound (never learned or played)
-    const slot = slotFor(kind, channel, d1);
-    if (slot) {
-      if (noteOn || (kind === 0xb0 && d2 > 0)) selectSlot(slot);
+  /** An event from the controller surface (see surface.js); raw = the MIDI message, for unassigned sliders. */
+  function handleSurface(e, raw) {
+    const a = config.play.find((c) => (e.kind === 'pads'
+      ? c.source.type === 'pad' && c.source.row === e.row && c.source.col === e.col
+      : c.source.type === 'slider' && c.source.index === e.index));
+    if (e.kind === 'pads') {
+      if (a) {
+        if (e.pressed) runAction(a.target);
+        return;
+      }
+      // the virtual pad plays the Play pad in the same row and column
+      const { cols, rows } = perf().pads;
+      if (e.row < rows && e.col < cols) padNote(e.row * cols + e.col, e.pressed, e.velocity);
       return;
     }
-    const source = kind === 0xb0 ? { type: 'cc', number: d1, channel } : noteOn || noteOff ? { type: 'note', number: d1, channel } : null;
+    if (e.kind === 'knobs') {
+      if (e.index < perf().knobs.length && perf().knobs[e.index].param) setKnob(e.index, e.value);
+      return;
+    }
+    if (a?.target.kind === 'param') {
+      const t = a.target;
+      let v = t.exponential ? t.min * (t.max / t.min) ** e.value : t.min + (t.max - t.min) * e.value;
+      if (t.step > 0) v = Math.round(v / t.step) * t.step;
+      parts.get('keys')?.set(t.param, v);
+    } else if (a) {
+      if (e.value > 0) runAction(a.target);
+    } else {
+      handle(...raw); // an unassigned slider keeps its standard meaning (pitch bend, mod wheel)
+    }
+  }
 
-    // learning: a new physical pad or knob links to the next virtual one. A control that is already
-    // linked is not moved (a knob sends many messages while turning, a pad may be hit twice): it just
-    // plays below, so you can check what is where
-    if (learning && source && (noteOn || kind === 0xb0)) {
-      const key = source.type === 'note' ? 'pads' : 'knobs';
-      const next = learnNext[key];
-      const linked = links[key].some((s) => sameSource(s, source));
-      if (next && (!linked || next.forced)) {
-        link(key, next.index, source);
-        if (key === 'pads') padNote(next.index, true, d2);
-        return;
-      }
-    }
-    if (source?.type === 'note') {
-      const pad = links.pads.findIndex((s) => sameSource(s, source));
-      if (pad >= 0 && pad < perf().pads.items.length) return padNote(pad, noteOn, d2);
-    }
-    if (source?.type === 'cc') {
-      const knob = links.knobs.findIndex((s) => sameSource(s, source));
-      if (knob >= 0 && knob < perf().knobs.length && perf().knobs[knob].param) {
-        setKnob(knob, d2 / 127);
-        return;
-      }
-    }
+  /** A MIDI message no surface widget has: it plays the keys part as normal MIDI. */
+  function handle(status, d1, d2) {
+    const kind = status & 0xf0;
+    const noteOn = kind === 0x90 && d2 > 0, noteOff = kind === 0x80 || (kind === 0x90 && d2 === 0);
     // everything else goes to the keys part as normal MIDI
     const keys = parts.get('keys');
     if (noteOn) keysNote(d1, true, d2);
@@ -226,43 +350,6 @@ export function mountPlay(root, { stored, links: storedLinks, getConfig, save, o
     else if (kind === 0xb0 && d1 === 1) keys?.set('modWheel', (d2 / 127) * 0.5);
     else if (kind === 0xe0) keys?.set('bend', ((((d2 << 7) | d1) / 16383) * 2 - 1) * 2);
     else if (kind === 0xb0 && (d1 === 120 || d1 === 123)) panic();
-  }
-
-  const slotCount = (key) => (key === 'pads' ? perf().pads.items.length : perf().knobs.length);
-
-  /** The first virtual pad / knob without a physical control, searching from `from` and wrapping. */
-  function firstUnlinked(key, from = 0) {
-    const n = slotCount(key);
-    for (let k = 0; k < n; k++) {
-      const i = (from + k) % n;
-      if (!links[key][i]) return { index: i, forced: false };
-    }
-    return null;
-  }
-
-  function link(key, index, source) {
-    // a physical control drives one virtual control: unlink it anywhere else first
-    links[key] = links[key].map((s) => (sameSource(s, source) ? null : s));
-    links[key][index] = source;
-    log(`linked ${describe(source)} → ${key === 'pads' ? 'pad' : 'knob'} ${index + 1}`);
-    // on to the next free one, so a whole row links by pressing its controls in order
-    learnNext[key] = firstUnlinked(key, index + 1);
-    persist();
-    render();
-  }
-
-  function setLearning(on) {
-    learning = on;
-    learnNext = on ? { pads: firstUnlinked('pads'), knobs: firstUnlinked('knobs') } : { pads: null, knobs: null };
-    render();
-  }
-
-  function clearLinks(key) {
-    links[key] = [];
-    learnNext[key] = firstUnlinked(key);
-    log(`cleared ${key === 'pads' ? 'pad' : 'knob'} links`);
-    persist();
-    render();
   }
 
   function setKnob(i, norm) {
@@ -278,15 +365,41 @@ export function mountPlay(root, { stored, links: storedLinks, getConfig, save, o
   }
 
   function panic() {
+    looper.stop();
     for (const part of parts.values()) part.send({ type: 'allNotesOff' });
   }
 
-  /** The slot a message is mapped to by a "slot" control in the config, or 0. */
-  function slotFor(kind, channel, number) {
-    const type = kind === 0xb0 ? 'cc' : kind === 0x90 || kind === 0x80 ? 'note' : null;
-    const c = config.controls.find((c) => c.target.kind === 'slot' && c.source.type === type
-      && c.source.number === number && (c.channel === null || c.channel === channel));
-    return c ? c.target.slot : 0;
+  /** A transport command (Start / Stop, MMC, or a Mackie button; see transport.js): the loop and the slots. */
+  function transport(cmd) {
+    switch (cmd) {
+      case 'play': startAudio(); looper.play(); break;
+      case 'stop': looper.stop(); break;
+      case 'record': startAudio(); looper.record(); break;
+      case 'recordExit': if (looper.recording) looper.record(); break;
+      case 'undo': looper.undo(); break;
+      case 'click':
+        looper.metronome = !looper.metronome;
+        log(`click ${looper.metronome ? 'on' : 'off'}`);
+        looper.onChange();
+        break;
+      default: {
+        const n = /^track(\d)$/.exec(cmd)?.[1];
+        if (n) selectSlot(Number(n));
+      }
+    }
+  }
+
+  /** The slot (1-based) whose preset the keys play now, or 0. */
+  const activeSlot = () => perf().slots.findIndex((p) => p && p === perf().keys.preset) + 1;
+
+  function runAction(t) {
+    switch (t.kind) {
+      case 'slot': selectSlot(t.slot); break;
+      case 'record': startAudio(); looper.record(); break;
+      case 'play': startAudio(); looper.play(); break;
+      case 'stop': looper.stop(); break;
+      case 'undoNote': looper.undo(); break;
+    }
   }
 
   /** Switches the keys to the preset in slot n (1-based). */
@@ -302,6 +415,7 @@ export function mountPlay(root, { stored, links: storedLinks, getConfig, save, o
       rebuild(); persist(); render();
     }
     log(`slot ${n}: ${preset}`);
+    onTransportChange(); // the slot's track LED
   }
 
   // MARK: saving
@@ -309,7 +423,7 @@ export function mountPlay(root, { stored, links: storedLinks, getConfig, save, o
   let saveTimer = 0;
   function persist() {
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => save(performances, links), 300);
+    saveTimer = setTimeout(() => save(performances), 300);
   }
 
   // MARK: view
@@ -320,13 +434,65 @@ export function mountPlay(root, { stored, links: storedLinks, getConfig, save, o
     e.append(...children);
     return e;
   };
-  const presetSelect = (value, onchange, { allowNone = false } = {}) => {
+  /** A preset choice, grouped: sounds and drums (drums first for pads). */
+  const presetSelect = (value, onchange, { allowNone = false, drumsFirst = false } = {}) => {
     const s = el('select', { onchange: (e) => onchange(e.target.value || null) });
     if (allowNone) s.append(new Option('— none —', ''));
-    for (const n of presetNames) s.append(new Option(n, n));
+    const group = (label, presets) => {
+      if (!presets.length) return;
+      const og = el('optgroup', { label });
+      for (const p of presets) og.append(new Option(p.name, p.name));
+      s.append(og);
+    };
+    const drums = config.presets.filter((p) => p.group === 'drums');
+    const sounds = config.presets.filter((p) => p.group !== 'drums' && p.engine !== 'fm');
+    const fm = config.presets.filter((p) => p.engine === 'fm');
+    if (drumsFirst) { group('drums', drums); group('sounds', sounds); group('FM', fm); } else { group('sounds', sounds); group('FM', fm); group('drums', drums); }
     s.value = value ?? '';
     return s;
   };
+
+  // MARK: kits
+
+  let kitChoice = '';
+
+  /** Puts a kit on the pads of this performance (its grid size too). */
+  function loadKit(name) {
+    const kit = config.kits.find((k) => k.name === name);
+    if (!kit) return;
+    panic();
+    perf().pads = { cols: kit.cols, rows: kit.rows, items: kit.items.map((it) => ({ ...it })) };
+    selected = { kind: 'pad', index: 0 };
+    rebuild(); persist(); render();
+    log(`kit: ${name} on the pads`);
+  }
+
+  function renderKitRow() {
+    const kits = config.kits;
+    const select = el('select', { onchange: (e) => { kitChoice = e.target.value; render(); } });
+    select.append(new Option(kits.length ? '— choose a kit —' : '— no kits —', ''));
+    for (const k of kits) select.append(new Option(`${k.name} (${k.rows} × ${k.cols})`, k.name));
+    if (!kits.some((k) => k.name === kitChoice)) kitChoice = '';
+    select.value = kitChoice;
+    return el('div', { className: 'play-row' },
+      el('span', { className: 'strip-note', textContent: 'kit' }),
+      select,
+      el('button', { type: 'button', textContent: 'Load', disabled: !kitChoice, title: 'Replace these pads with the kit',
+        onclick: () => {
+          if (perf().pads.items.some((p) => p.preset) && !confirm(`Replace the pads with “${kitChoice}”?`)) return;
+          loadKit(kitChoice);
+        } }),
+      el('button', { type: 'button', textContent: 'Save as kit', title: 'Keep these pads (sounds, notes, volumes) as a kit in the library',
+        onclick: () => {
+          const name = prompt('Kit name (an existing name is overwritten):', kitChoice || `${perf().name} kit`)?.trim();
+          if (!name) return;
+          const { cols, rows, items } = perf().pads;
+          kitChoice = name;
+          saveKit({ name, cols, rows, items: items.map((it) => ({ preset: it.preset, note: it.note, volume: it.volume })) });
+        } }),
+      el('button', { type: 'button', textContent: 'Delete kit', disabled: !kitChoice,
+        onclick: () => { if (confirm(`Delete the kit “${kitChoice}” from the library?`)) { deleteKit(kitChoice); kitChoice = ''; } } }));
+  }
 
   function renderHeader() {
     const perfSelect = el('select', { onchange: (e) => { current = Number(e.target.value); selected = { kind: 'pad', index: 0 }; rebuild(); persist(); render(); } });
@@ -339,7 +505,7 @@ export function mountPlay(root, { stored, links: storedLinks, getConfig, save, o
       el('div', { className: 'play-row' },
         el('div', { className: 'lcd program-lcd' }, perfSelect),
         el('button', { type: 'button', textContent: 'New', onclick: () => {
-          performances.push(newPerformance(`performance ${performances.length + 1}`, perf().keys.preset));
+          performances.push(newPerformance(`performance ${performances.length + 1}`, perf().keys.preset, surface.layout.rows, surface.layout.cols));
           performances[performances.length - 1] = sanitize(performances.at(-1), presetNames, presetNames[0]);
           current = performances.length - 1;
           rebuild(); persist(); render();
@@ -354,9 +520,6 @@ export function mountPlay(root, { stored, links: storedLinks, getConfig, save, o
           current = 0;
           rebuild(); persist(); render();
         } }),
-        el('button', { type: 'button', className: learning ? 'on' : '', textContent: learning ? 'Done learning' : 'Learn',
-          title: 'Link your controller: while learning, hit your pads in order and turn your knobs one by one — each new one links to the next virtual pad or knob.',
-          onclick: () => setLearning(!learning) }),
         el('button', { type: 'button', textContent: 'All notes off', onclick: panic })),
       el('div', { className: 'play-row' },
         el('span', { className: 'strip-note', textContent: 'KEYS' }),
@@ -366,7 +529,7 @@ export function mountPlay(root, { stored, links: storedLinks, getConfig, save, o
         size('', perf().pads.rows, 1, 8, (v) => resizePads(perf().pads.cols, v)),
         size('knobs', perf().knobs.length, 1, 16, resizeKnobs)),
       renderSlots(),
-      learning ? renderLearnBar() : '');
+      renderSlotsHint());
   }
 
   /** One preset choice per slot the config's "slot" controls use; the slot playing now is lit. */
@@ -388,38 +551,17 @@ export function mountPlay(root, { stored, links: storedLinks, getConfig, save, o
       }));
   }
 
-  /** While learning, show what just arrived, so "nothing happens" can be told apart from "nothing arrives". */
-  let lastMidi = 'nothing yet';
-  function showLastMidi(status, d1, d2) {
-    const kind = status & 0xf0, ch = `ch${(status & 0x0f) + 1}`;
-    lastMidi = kind === 0x90 || kind === 0x80 ? `${noteName(d1)} (note ${d1}) ${ch}`
-      : kind === 0xb0 ? `cc ${d1} = ${d2} ${ch}` : kind === 0xe0 ? `pitch bend ${ch}` : `status ${status.toString(16)}`;
-    const out = root.querySelector('.play-last-midi');
-    if (out) out.textContent = lastMidi;
-  }
-
-  function renderLearnBar() {
-    const inputs = midiInputs();
-    const status = inputs === null ? 'MIDI is not available (allow MIDI access in the browser)'
-      : inputs.length ? `MIDI in: ${inputs.join(', ')}` : 'No MIDI input connected (see Setup)';
-    const next = (key, noun, verb) => (learnNext[key]
-      ? `${verb} → ${noun} ${learnNext[key].index + 1}`
-      : `all ${noun}s linked`);
-    return el('div', { className: 'play-learn' },
-      el('p', { textContent: `Learning — ${next('pads', 'pad', 'hit a new pad')} · ${next('knobs', 'knob', 'turn a new knob')}. `
-        + 'Linked controls just play, so you can check them; click a pad or knob here to link it again.' }),
-      el('p', { className: 'strip-note' }, `${status} · last received: `,
-        el('span', { className: 'play-last-midi', textContent: lastMidi })),
-      el('div', { className: 'play-row' },
-        el('button', { type: 'button', textContent: 'Clear pad links', disabled: !links.pads.some(Boolean), onclick: () => clearLinks('pads') }),
-        el('button', { type: 'button', textContent: 'Clear knob links', disabled: !links.knobs.some(Boolean), onclick: () => clearLinks('knobs') })));
+  /** Which virtual controls the Play screen follows (they are learned on the Controller screen). */
+  function renderSlotsHint() {
+    const { knobs, rows, cols } = surface.layout;
+    return el('p', { className: 'strip-note', textContent: `Controller: pad r-c plays the pad in row r, column c (surface ${rows} × ${cols}); `
+      + `knob k moves knob k (${knobs} knobs). Pads the config's "play" list assigns do that instead. Learn the controller on the Setup screen.` });
   }
 
   function resizePads(cols, rows) {
     const items = perf().pads.items;
     perf().pads = { cols, rows, items: Array.from({ length: cols * rows }, (_, i) => items[i] ?? { preset: null, note: 60, volume: 1 }) };
     selected = { kind: 'pad', index: 0 };
-    if (learning) learnNext.pads = firstUnlinked('pads');
     rebuild(); persist(); render();
   }
 
@@ -427,8 +569,16 @@ export function mountPlay(root, { stored, links: storedLinks, getConfig, save, o
     const knobs = perf().knobs;
     perf().knobs = Array.from({ length: n }, (_, i) => knobs[i] ?? { target: 'keys', param: null, value: null });
     selected = { kind: 'knob', index: 0 };
-    if (learning) learnNext.knobs = firstUnlinked('knobs');
     persist(); render();
+  }
+
+  /** "r-c" of the controller pad that plays Play pad i (same row and column), if the surface has it bound. */
+  function followed(i) {
+    const { cols } = perf().pads;
+    const row = Math.floor(i / cols), col = i % cols;
+    if (row >= surface.layout.rows || col >= surface.layout.cols || !surface.pads[row * surface.layout.cols + col]) return '';
+    if (config.play.some((c) => c.source.type === 'pad' && c.source.row === row && c.source.col === col)) return '';
+    return `${row + 1}-${col + 1}`;
   }
 
   function renderPads() {
@@ -439,15 +589,13 @@ export function mountPlay(root, { stored, links: storedLinks, getConfig, save, o
       const b = el('button', { type: 'button', className: 'pad' },
         el('span', { className: 'pad-name', textContent: pad.preset ?? '—' }),
         el('span', { className: 'pad-note', textContent: pad.preset ? noteName(pad.note) : '' }),
-        links.pads[i] ? el('span', { className: 'pad-link', textContent: describe(links.pads[i]) }) : '');
+        followed(i) ? el('span', { className: 'pad-link', textContent: followed(i) }) : '');
       b.classList.toggle('selected', selected.kind === 'pad' && selected.index === i);
       b.classList.toggle('empty', !pad.preset);
-      b.classList.toggle('learn-next', learning && learnNext.pads?.index === i);
       b.addEventListener('pointerdown', (e) => {
         e.preventDefault();
         startAudio();
         selected = { kind: 'pad', index: i };
-        if (learning) learnNext.pads = { index: i, forced: true };
         render();
         padNote(i, true, 100);
         const up = () => { padNote(i, false); removeEventListener('pointerup', up); };
@@ -458,18 +606,18 @@ export function mountPlay(root, { stored, links: storedLinks, getConfig, save, o
     const pad = selected.kind === 'pad' ? items[selected.index] : null;
     const editor = pad ? el('div', { className: 'play-editor' },
       el('strong', { textContent: `Pad ${selected.index + 1}` }),
-      el('label', {}, 'sound ', presetSelect(pad.preset, (v) => { pad.preset = v; rebuild(); persist(); render(); }, { allowNone: true })),
+      el('label', {}, 'sound ', presetSelect(pad.preset, (v) => { pad.preset = v; rebuild(); persist(); render(); }, { allowNone: true, drumsFirst: true })),
       el('label', {}, 'note ',
         el('button', { type: 'button', textContent: '−', onclick: () => { pad.note = Math.max(0, pad.note - 1); persist(); render(); } }),
         el('span', { className: 'play-note', textContent: `${noteName(pad.note)} (${pad.note})` }),
         el('button', { type: 'button', textContent: '+', onclick: () => { pad.note = Math.min(127, pad.note + 1); persist(); render(); } })),
       el('label', {}, 'volume ', el('input', { type: 'range', min: 0, max: 1, step: 0.01, value: pad.volume,
         oninput: (e) => { pad.volume = Number(e.target.value); persist(); } })),
-      el('span', { className: 'strip-note', textContent: links.pads[selected.index] ? `linked to ${describe(links.pads[selected.index])}` : 'not linked (use Learn)' }))
+      el('span', { className: 'strip-note', textContent: followed(selected.index) ? `played by controller pad ${followed(selected.index)}` : 'no controller pad in this position' }))
       : '';
     return el('section', { className: 'module play-pads' },
-      el('h3', { textContent: 'PADS', title: 'Click a pad to hear and edit it. Each pad plays a preset at a fixed note; pads with the same preset share one synth.' }),
-      grid, editor);
+      el('h3', { textContent: 'PADS', title: 'Click a pad to hear and edit it. Each pad plays a preset at a fixed note; pads with the same preset share one synth. A kit fills them all at once.' }),
+      renderKitRow(), grid, editor);
   }
 
   function renderKnobs() {
@@ -478,7 +626,6 @@ export function mountPlay(root, { stored, links: storedLinks, getConfig, save, o
     perf().knobs.forEach((k, i) => {
       const wrap = el('div', { className: 'play-knob' });
       wrap.classList.toggle('selected', selected.kind === 'knob' && selected.index === i);
-      wrap.classList.toggle('learn-next', learning && learnNext.knobs?.index === i);
       if (k.param) {
         const knob = new Knob(`knob${i}`, SPECS[k.param], `${LABELS[k.param]}`, {
           get: () => knobValue(k),
@@ -486,7 +633,7 @@ export function mountPlay(root, { stored, links: storedLinks, getConfig, save, o
           reset: () => { k.value = null; rebuild(); persist(); render(); },
         });
         knob.update(knobValue(k));
-        if (links.knobs[i]) knob.badge(String(i + 1));
+        if (i < surface.layout.knobs && surface.knobs[i]) knob.badge(String(i + 1));
         knobControls[i] = knob;
         wrap.append(knob.el);
       } else {
@@ -495,7 +642,6 @@ export function mountPlay(root, { stored, links: storedLinks, getConfig, save, o
       wrap.append(el('button', { type: 'button', className: 'play-knob-target', textContent: `${i + 1} · ${k.param ? TARGETS[k.target] : 'unassigned'}`,
         onclick: () => {
           selected = { kind: 'knob', index: i };
-          if (learning) learnNext.knobs = { index: i, forced: true };
           render();
         } }));
       row.append(wrap);
@@ -518,21 +664,63 @@ export function mountPlay(root, { stored, links: storedLinks, getConfig, save, o
         el('strong', { textContent: `Knob ${selected.index + 1}` }),
         el('label', {}, 'controls ', target),
         el('label', {}, 'parameter ', param),
-        el('span', { className: 'strip-note', textContent: links.knobs[selected.index] ? `linked to ${describe(links.knobs[selected.index])}` : 'not linked (use Learn)' }));
+        el('span', { className: 'strip-note', textContent: selected.index < surface.layout.knobs && surface.knobs[selected.index] ? `moved by controller knob ${selected.index + 1}` : 'no controller knob with this number' }));
     }
     return el('section', { className: 'module play-knobs-module' },
       el('h3', { textContent: 'KNOBS', title: 'Each knob moves one parameter of the keys sound, the pad sounds, or both, on top of their presets (not saved into the presets). Double-click a knob to go back to the preset value.' }),
       row, editor);
   }
 
+  function renderLoop() {
+    const L = looper;
+    const button = (text, title, onclick, on = false) =>
+      el('button', { type: 'button', textContent: text, title, className: on ? 'on' : '', onclick });
+    const tempo = el('input', { type: 'number', min: 40, max: 240, value: L.bpm, disabled: L.locked,
+      onchange: (e) => L.setTempo(Number(e.target.value) || 120, L.bars) });
+    const bars = el('select', { disabled: L.locked, onchange: (e) => L.setTempo(L.bpm, Number(e.target.value)) });
+    for (const n of [1, 2, 4, 8]) bars.append(new Option(`${n} bar${n > 1 ? 's' : ''}`, String(n)));
+    bars.value = String(L.bars);
+    const check = (label, value, onchange) => el('label', { className: 'play-size' },
+      el('input', { type: 'checkbox', checked: value, onchange: (e) => onchange(e.target.checked) }), label);
+    const layers = [...L.layers.map((layer, i) => el('button', {
+      type: 'button', className: `loop-layer${layer.muted ? ' muted' : ''}`,
+      textContent: `${i + 1} · ${layer.events.filter((e) => e.on).length}`,
+      title: 'Layer: notes recorded in one take. Click to mute / unmute.',
+      onclick: () => L.toggleMute(i),
+    })), ...(L.recording ? [el('span', { className: 'loop-layer recording', textContent: `${L.layers.length + 1} · rec` })] : [])];
+    return el('section', { className: 'module play-loop' },
+      el('h3', { textContent: 'LOOP', title: 'Record what you play on the keys and pads into a loop, then keep adding layers while it plays. Each take (record → record) is one layer; undo takes back one note at a time.' }),
+      el('div', { className: 'play-row' },
+        button('● Rec', 'Start recording a layer (starts the loop if it is stopped); press again to keep the take', () => { startAudio(); L.record(); }, !!L.recording),
+        button('▶ Play', 'Play the loop from the top', () => { startAudio(); L.play(); }, L.playing && !L.recording),
+        button('■ Stop', 'Stop (keeps the layers)', () => L.stop()),
+        button('↶ Undo', 'Remove the last recorded note', () => L.undo()),
+        button('Clear', 'Remove every layer', () => L.clear()),
+        el('div', { className: 'lcd loop-lcd' }, el('span', { className: 'loop-pos', textContent: '1.1' })),
+        el('div', { className: 'loop-bar' }, el('div', { className: 'loop-fill' }))),
+      el('div', { className: 'play-row' },
+        el('label', { className: 'play-size' }, 'bpm', tempo),
+        bars,
+        check('quantize 1/16', L.quantize, (v) => { L.quantize = v; }),
+        check('click', L.metronome, (v) => { L.metronome = v; }),
+        el('span', { className: 'strip-note', textContent: L.locked ? 'layers:' : 'tempo and length are set until the first layer' }),
+        ...layers));
+  }
+
   function render() {
-    root.replaceChildren(renderHeader(), renderPads(), renderKnobs());
+    root.replaceChildren(renderHeader(), renderLoop(), renderPads(), renderKnobs());
   }
 
   render();
 
   return {
     handle,
+    handleSurface,
+    transport,
+    /** What the transport LEDs show on this screen. */
+    get transportState() {
+      return { playing: looper.playing, recording: !!looper.recording, cycle: false, track: activeSlot() };
+    },
     keysNote,
     panic,
     /** Called when audio starts: parts can now be created. */
@@ -542,6 +730,10 @@ export function mountPlay(root, { stored, links: storedLinks, getConfig, save, o
     },
     /** Stops and removes every part (before a new config replaces this screen). */
     dispose() {
+      looper.stop();
+      cancelAnimationFrame(frame);
+      for (const part of loopParts.values()) part.dispose();
+      loopParts.clear();
       for (const part of parts.values()) part.dispose();
       parts.clear();
     },

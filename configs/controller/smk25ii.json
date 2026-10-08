@@ -1,0 +1,35 @@
+{
+  "pickup": true,
+  "mackie": {
+    "port": ["ポート3", "Port 3"],
+    "sysexNote": "F0 35 59 10",
+    "buttons": {"76": "undo"}
+  },
+  "inputs": [
+    {"port": "SMK25II-Private", "drop": true}
+  ],
+  "edit": [
+    {"pad": "1-1", "action": "page", "page": "osc 1"},
+    {"pad": "1-2", "action": "page", "page": "osc 2"},
+    {"pad": "1-3", "action": "page", "page": "mixer"},
+    {"pad": "1-4", "action": "page", "page": "filter"},
+    {"pad": "1-5", "action": "page", "page": "filter env"},
+    {"pad": "1-6", "action": "page", "page": "amp env"},
+    {"pad": "1-7", "action": "page", "page": "voice"},
+    {"pad": "1-8", "action": "page", "page": "lfo"},
+    {"pad": "2-1", "action": "page", "page": "fx"},
+    {"pad": "2-2", "action": "page", "page": "master"},
+    {"pad": "2-3", "action": "page", "page": "levels"},
+    {"pad": "2-4", "action": "page", "page": "ratios"},
+    {"pad": "2-5", "action": "page", "page": "vel"},
+    {"pad": "2-6", "action": "page", "page": "decay"},
+    {"pad": "2-7", "action": "savePreset"},
+    {"pad": "2-8", "action": "undo"},
+    {"slider": 1, "param": "transpose", "min": -12, "max": 12, "step": 1},
+    {"slider": 2, "param": "modWheel", "min": 0, "max": 0.4}
+  ],
+  "play": [
+    {"slider": 1, "param": "transpose", "min": -12, "max": 12, "step": 1},
+    {"slider": 2, "param": "modWheel", "min": 0, "max": 0.4}
+  ]
+}

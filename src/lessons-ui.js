@@ -1,20 +1,21 @@
 // The Lessons drawer: pick a lesson, read a step, set its knobs, hear an example, and see the
 // controls it talks about highlighted on the panel.
 import { CHOICES } from './config.js';
-import { LESSONS, PHRASES } from './lessons.js';
+import { LESSONS as DEFAULT_LESSONS, PHRASES } from './lessons.js';
 
 const STATE_KEY = 'soft-synth-web:lesson'; // which lesson / step is open, remembered in this browser
+const INTRO = 'Short, hands-on lessons in sound design. Each step sets a few knobs, highlights them on the panel, and can play an example — then it is your turn to turn the knobs and listen. Set knobs always starts over from the init patch and rebuilds the lesson up to that step, so you can jump to any step. Undo (⌘Z / Ctrl+Z) brings back the sound you had before.';
 
-function loadState() {
+function loadState(key) {
   try {
-    const s = JSON.parse(localStorage.getItem(STATE_KEY));
+    const s = JSON.parse(localStorage.getItem(key));
     if (s && typeof s === 'object') return s;
   } catch { /* start fresh */ }
   return null;
 }
 
-function saveState(s) {
-  try { localStorage.setItem(STATE_KEY, JSON.stringify(s)); } catch { /* not essential */ }
+function saveState(key, s) {
+  try { localStorage.setItem(key, JSON.stringify(s)); } catch { /* not essential */ }
 }
 
 const el = (tag, props = {}, ...children) => {
@@ -28,9 +29,18 @@ const el = (tag, props = {}, ...children) => {
  * Mounts the lessons drawer.
  * controls: the panel's controls by parameter name (for highlighting);
  * play(note, on, velocity): plays a note through the synth; startAudio(): unlocks audio.
+ * Another course (the FM page's) passes its own lessons, a storage key, an intro, and
+ * load(values): set those values on top of the course's init sound (one undo step).
  */
-export function mountLessons({ drawer, toggle, controller, controls, play, startAudio }) {
-  const state = { lesson: null, step: 0, open: false, ...loadState() };
+export function mountLessons({
+  drawer, toggle, controller, controls, play, startAudio,
+  lessons: LESSONS = DEFAULT_LESSONS, stateKey = STATE_KEY, intro = INTRO,
+  load = (values) => controller.loadSound(values, { init: true }),
+  value = (name, v) => (CHOICES[name] && typeof v === 'string' ? CHOICES[name].indexOf(v) : v),
+  // brings a control into view (a page that hides some controls opens them first)
+  reveal = (name) => controls.get(name)?.el.scrollIntoView({ behavior: 'smooth', block: 'center' }),
+}) {
+  const state = { lesson: null, step: 0, open: false, ...loadState(stateKey) };
   if (!LESSONS[state.lesson]) state.lesson = null;
   let timers = [];
   let sounding = [];
@@ -64,13 +74,12 @@ export function mountLessons({ drawer, toggle, controller, controls, play, start
     while (first > 0 && lesson.steps[first].start !== 'init') first--;
     const values = {};
     for (const step of lesson.steps.slice(first, index + 1)) {
-      for (const [name, v] of Object.entries(step.set ?? {})) {
-        values[name] = CHOICES[name] && typeof v === 'string' ? CHOICES[name].indexOf(v) : v;
-      }
+      for (const [name, v] of Object.entries(step.set ?? {})) values[name] = value(name, v);
     }
-    controller.loadSound(values, { init: true });
+    load(values);
     // bring the first control the step talks about into view
-    controls.get(lesson.steps[index].focus?.[0])?.el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const focus = lesson.steps[index].focus?.[0];
+    if (focus) reveal(focus);
   }
 
   function highlight(names) {
@@ -82,7 +91,7 @@ export function mountLessons({ drawer, toggle, controller, controls, play, start
     stopExample();
     state.lesson = lesson;
     state.step = step;
-    saveState(state);
+    saveState(stateKey, state);
     render();
   }
 
@@ -93,7 +102,7 @@ export function mountLessons({ drawer, toggle, controller, controls, play, start
         el('span', { className: 'lesson-num', textContent: String(i + 1) }),
         el('span', {}, el('strong', { textContent: l.title }), el('small', { textContent: l.summary })))));
     drawer.querySelector('.lessons-body').replaceChildren(
-      el('p', { className: 'lesson-intro', textContent: 'Short, hands-on lessons in sound design. Each step sets a few knobs, highlights them on the panel, and can play an example — then it is your turn to turn the knobs and listen. Set knobs always starts over from the init patch and rebuilds the lesson up to that step, so you can jump to any step. Undo (⌘Z / Ctrl+Z) brings back the sound you had before.' }),
+      el('p', { className: 'lesson-intro', textContent: intro }),
       el('ol', { className: 'lesson-list' }, ...items),
     );
   }
@@ -103,7 +112,9 @@ export function mountLessons({ drawer, toggle, controller, controls, play, start
     const step = lesson.steps[state.step];
     highlight(step.focus ?? []);
     const last = state.step === lesson.steps.length - 1;
-    const buttons = [
+    // a step that only explains (no values, no fresh start) has no Set knobs
+    const hasSound = lesson.steps.slice(0, state.step + 1).some((s) => s.set || s.start);
+    const buttons = !hasSound ? [] : [
       el('button', {
         type: 'button',
         className: 'primary',
@@ -150,11 +161,12 @@ export function mountLessons({ drawer, toggle, controller, controls, play, start
   function setOpen(open) {
     state.open = open;
     if (!open) stopExample();
-    saveState(state);
+    saveState(stateKey, state);
     render();
   }
 
   toggle.addEventListener('click', () => setOpen(!state.open));
   drawer.querySelector('.lessons-close').addEventListener('click', () => setOpen(false));
   render();
+  return { close: () => state.open && setOpen(false) };
 }

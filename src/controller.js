@@ -3,6 +3,7 @@ import {
   BUILTIN, CHOICES, DEFAULT_PARAMS, DEFAULT_PARTIALS, INIT_PARAMS, INIT_PARTIALS, PARAMS, PERFORMANCE,
   newPartial, partialParam,
 } from './config.js';
+import { pagesFor, paramSpec } from './pages.js';
 
 const round = (v) => Number(v.toFixed(4));
 
@@ -26,7 +27,9 @@ export class Controller {
     this.partials = DEFAULT_PARTIALS;
     this.presetIndex = 0;
     this.edited = false; // the sound differs from the saved preset
-    this.page = null;
+    this.pages = pagesFor(8);     // knob pages (panel modules, split by the number of virtual knobs)
+    this.pageIndex = 0;
+    this.knobControls = new Map(); // "page:knob" → the control a virtual knob is on that page (for pickup state)
     this.pickupState = new Map(); // control → { lastIn, lastSent } for soft takeover
     this.history = [];            // earlier sounds, newest last, for undo
     this.lastEdit = { key: null, time: 0 };
@@ -40,7 +43,7 @@ export class Controller {
     const current = this.presetName;
     this.config = config;
     this.pickupState.clear();
-    this.page = config.pages.includes(this.page) ? this.page : config.pages[0] ?? null;
+    this.knobControls.clear();
     this.params = { ...DEFAULT_PARAMS, ...config.params };
     // on reload, stay on the preset with the same name if it still exists
     const name = config.presets.some((p) => p.name === current) ? current : config.initialPreset;
@@ -48,60 +51,148 @@ export class Controller {
     this.history = [];
   }
 
+  /** New controller settings or library contents, without touching the sound being edited. */
+  updateConfig(config) {
+    this.config = config;
+    this.pickupState.clear();
+    this.knobControls.clear();
+    this.onChange();
+  }
+
   /** Sends the whole state to the synth again (e.g. right after audio starts). */
   sync() {
     this.send({ type: 'params', params: this.params, partials: this.partials });
   }
 
-  /** Controls that respond on the current page. */
-  get activeControls() {
-    return this.config.controls.filter((c) => c.page === null || c.page === this.page);
+  // MARK: pages
+
+  /** The page the virtual knobs are on: { group, title, sub, subs, params }. */
+  get page() {
+    return this.pages[this.pageIndex];
   }
 
-  /** Handles one MIDI 1.0 channel message. */
+  /** How many virtual knobs the controller surface has: the pages are cut to that size. */
+  setKnobCount(n) {
+    const group = this.page?.group;
+    this.pages = pagesFor(n);
+    this.pageIndex = Math.max(0, this.pages.findIndex((p) => p.group === group));
+    this.knobControls.clear();
+    this.pickupState.clear();
+    this.onChange();
+  }
+
+  /** Jumps to a page group; asked again for the group it is on, moves to that group's next page. */
+  selectGroup(group) {
+    const first = this.pages.findIndex((p) => p.group === group);
+    if (first < 0) return;
+    const i = this.page.group === group ? first + ((this.page.sub + 1) % this.page.subs) : first;
+    this.selectPage(i);
+  }
+
+  /** Goes to the page with this parameter (touching a control on screen brings its page to the knobs). */
+  showParam(name) {
+    if (this.page.params.includes(name)) return;
+    const i = this.pages.findIndex((p) => p.params.includes(name));
+    if (i >= 0) this.selectPage(i);
+  }
+
+  stepPage(step) {
+    this.selectPage((this.pageIndex + step + this.pages.length) % this.pages.length);
+  }
+
+  selectPage(i) {
+    if (i === this.pageIndex) return;
+    this.pageIndex = i;
+    this.log(`page: ${this.pageName}`);
+    this.onChange();
+  }
+
+  get pageName() {
+    const p = this.page;
+    return p.subs > 1 ? `${p.group} ${p.sub + 1}/${p.subs}` : p.group;
+  }
+
+  /** The control virtual knob k is on the current page, or null when the page has fewer controls. */
+  knobControl(k) {
+    const param = this.page.params[k];
+    if (!param) return null;
+    const key = `${this.pageIndex}:${k}`;
+    if (!this.knobControls.has(key)) {
+      const spec = paramSpec(param);
+      this.knobControls.set(key, { target: {
+        kind: 'param', param, min: spec.min, max: spec.max, exponential: !!spec.exp, step: spec.step ?? 0, zero: !!spec.zero,
+        // soft takeover suits continuous values; stepped ones (wave shapes, voices) simply follow the knob
+        pickup: this.config.pickup && !spec.step,
+      } });
+    }
+    return this.knobControls.get(key);
+  }
+
+  // MARK: transport
+
+  /**
+   * A transport command (Start / Stop, MMC, or a Mackie button; see transport.js) on the Edit screen:
+   * the recorder, presets, and knob pages.
+   */
+  transport(cmd) {
+    const r = this.recorder;
+    switch (cmd) {
+      case 'play': r?.play(); break;
+      case 'stop': r?.stop(); break;
+      case 'record': r?.record(); break;
+      case 'recordExit': if (r?.state === 'recording') r.record(); break;
+      case 'cycle': r?.toggleLoop(); break;
+      case 'rewind': this.selectPreset((this.presetIndex + this.config.presets.length - 1) % this.config.presets.length); break;
+      case 'forward': this.selectPreset((this.presetIndex + 1) % this.config.presets.length); break;
+      case 'bankLeft': this.stepPage(-1); break;
+      case 'bankRight': this.stepPage(1); break;
+      case 'undo': this.undo(); break;
+      case 'save': this.savePreset(); break;
+      default: {
+        // track n: the n-th preset of the library
+        const n = /^track(\d)$/.exec(cmd)?.[1];
+        if (n && Number(n) <= this.config.presets.length) this.selectPreset(Number(n) - 1);
+      }
+    }
+  }
+
+  /** What the transport LEDs show on this screen. */
+  get transportState() {
+    const r = this.recorder;
+    return { playing: r?.state === 'playing', recording: r?.state === 'recording', cycle: !!r?.loop };
+  }
+
+  // MARK: MIDI
+
+  /**
+   * An event from the controller surface (see surface.js). raw = the MIDI message, for sliders that the
+   * config leaves unassigned: they keep their standard meaning (pitch bend, mod wheel).
+   */
+  handleSurface(e, raw) {
+    if (e.kind === 'knobs') {
+      const c = this.knobControl(e.index);
+      if (c) this.applyParam(c, e.value);
+      return;
+    }
+    const a = this.config.edit.find((c) => (e.kind === 'pads'
+      ? c.source.type === 'pad' && c.source.row === e.row && c.source.col === e.col
+      : c.source.type === 'slider' && c.source.index === e.index));
+    if (a) this.apply(a, e.value, e.pressed);
+    else if (e.kind === 'sliders') this.handle(...raw);
+  }
+
+  /** Handles one MIDI 1.0 channel message that no controller surface widget has: standard MIDI. */
   handle(status, d1, d2) {
     const kind = status & 0xf0;
-    const channel = status & 0x0f;
     if (this.config.logMIDI) this.log(`midi: ${describeMIDI(status, d1, d2)}`);
-
-    let type, number, value, pressed;
-    switch (kind) {
-      case 0x90:
-      case 0x80:
-        type = 'note';
-        number = d1;
-        pressed = kind === 0x90 && d2 > 0;
-        value = pressed ? 1 : 0;
-        break;
-      case 0xb0:
-        type = 'cc';
-        number = d1;
-        value = d2 / 127;
-        pressed = d2 > 0;
-        break;
-      case 0xe0:
-        type = 'pitchBend';
-        value = ((d2 << 7) | d1) / 16383;
-        pressed = false;
-        break;
-      default:
-        return;
-    }
-
-    let matched = false;
-    for (const c of this.activeControls) {
-      if (c.source.type !== type || c.source.number !== number) continue;
-      if (c.channel !== null && c.channel !== channel) continue;
-      matched = true;
-      this.apply(c, value, pressed);
-    }
-    if (matched) return;
-
-    // messages without a mapping are treated as standard MIDI
+    // notes, sustain, all notes off, pitch bend (±2 semitones), mod wheel, volume
     if (kind === 0x90 && d2 > 0) this.play({ type: 'noteOn', key: d1, velocity: d2 });
     else if (kind === 0x90 || kind === 0x80) this.play({ type: 'noteOff', key: d1 });
     else if (kind === 0xb0 && d1 === 64) this.play({ type: 'sustain', down: d2 >= 64 });
     else if (kind === 0xb0 && (d1 === 120 || d1 === 123)) this.send({ type: 'allNotesOff' });
+    else if (kind === 0xe0) this.setParam('bend', ((((d2 << 7) | d1) / 16383) * 2 - 1) * 2);
+    else if (kind === 0xb0 && d1 === 1) this.setParam('modWheel', (d2 / 127) * 0.5);
+    else if (kind === 0xb0 && d1 === 7) this.setParam('volume', d2 / 127);
   }
 
   /** A note or pedal message played live: to the synth, and into the recording if one is running. */
@@ -113,13 +204,14 @@ export class Controller {
   apply(control, value, pressed) {
     const t = control.target;
     const presets = this.config.presets;
-    const pages = this.config.pages;
     switch (t.kind) {
       case 'param':
         this.applyParam(control, value);
         break;
       case 'preset':
-        if (pressed) this.selectPreset(presets.findIndex((p) => p.name === t.preset));
+        if (!pressed) break;
+        if (presets.some((p) => p.name === t.preset)) this.selectPreset(presets.findIndex((p) => p.name === t.preset));
+        else this.log(`no preset called "${t.preset}" in the library`);
         break;
       case 'nextPreset':
         if (pressed) this.selectPreset((this.presetIndex + 1) % presets.length);
@@ -128,21 +220,18 @@ export class Controller {
         if (pressed) this.selectPreset(((this.presetIndex < 0 ? 0 : this.presetIndex) + presets.length - 1) % presets.length);
         break;
       case 'page':
-        if (pressed) this.selectPage(t.page);
+        if (pressed) this.selectGroup(t.page);
         break;
       case 'pageKnob':
-        // a knob choosing the page by its position: the range is split evenly between the pages
-        if (pages.length > 0) this.selectPage(pages[Math.min(pages.length - 1, Math.floor(value * pages.length))]);
+        // a slider choosing the page by its position: the range is split evenly between the pages
+        this.selectPage(Math.min(this.pages.length - 1, Math.floor(value * this.pages.length)));
         break;
       case 'undo':
         if (pressed) this.undo();
         break;
       case 'nextPage':
       case 'prevPage':
-        if (pressed && pages.length > 0) {
-          const step = t.kind === 'nextPage' ? 1 : pages.length - 1;
-          this.selectPage(pages[(pages.indexOf(this.page) + step) % pages.length]);
-        }
+        if (pressed) this.stepPage(t.kind === 'nextPage' ? 1 : -1);
         break;
       case 'savePreset':
         if (pressed) this.savePreset();
@@ -174,6 +263,10 @@ export class Controller {
       case 'slot':
         // preset slots are filled in on the Play screen and only work there
         if (pressed) this.log(`slot ${t.slot}: preset slots work on the Play screen`);
+        break;
+      case 'undoNote':
+        // the Play screen's loop
+        if (pressed) this.log('undoNote works on the Play screen');
         break;
     }
   }
@@ -253,13 +346,6 @@ export class Controller {
     this.onChange();
   }
 
-  selectPage(page) {
-    if (page === this.page) return;
-    this.page = page;
-    this.log(`page: ${page}`);
-    this.onChange();
-  }
-
   /**
    * Loads the init patch without adding it anywhere: presetIndex becomes -1 ("unsaved") until
    * savePreset() gives it a name.
@@ -332,12 +418,13 @@ export class Controller {
     }));
     while (partials.length > 1 && partials.at(-1).level === 0 && partials.at(-1).velocity === 0) partials.pop();
 
+    const group = this.config.presets[index]?.group ?? null; // a drum stays a drum
     const presets = [...this.config.presets];
-    presets[index] = { name, values, partials };
+    presets[index] = { name, group, values, partials };
     this.config = { ...this.config, presets };
     this.presetIndex = index;
     this.edited = false;
-    this.onSavePreset(index, { name, ...json, partials: partials.map(compactPartial) });
+    this.onSavePreset(index, { name, ...(group ? { group } : {}), ...json, partials: partials.map(compactPartial) });
     this.log(`saved preset: ${name}`);
     this.onChange();
   }
@@ -382,7 +469,7 @@ export class Controller {
       edited: this.edited,
       params: this.params,
       partials: this.partials,
-      page: this.page,
+      page: { group: this.page.group, sub: this.page.sub },
     };
   }
 
@@ -409,7 +496,8 @@ export class Controller {
     this.params = params;
     this.partials = partials;
     this.edited = state.edited === true;
-    if (this.config.pages.includes(state.page)) this.page = state.page;
+    const page = this.pages.findIndex((p) => p.group === state.page?.group && p.sub === state.page?.sub);
+    if (page >= 0) this.pageIndex = page;
     this.pickupState.clear();
     this.history = [];
     this.sync();
@@ -423,9 +511,13 @@ export class Controller {
   }
 }
 
-const normalize = (t, v) => (t.exponential ? Math.log(v / t.min) / Math.log(t.max / t.min) : (v - t.min) / (t.max - t.min));
+function normalize(t, v) {
+  if (t.zero && v <= 0) return 0;
+  return t.exponential ? Math.log(v / t.min) / Math.log(t.max / t.min) : (v - t.min) / (t.max - t.min);
+}
 
 function denormalize(t, x) {
+  if (t.zero && x < 0.005) return 0; // the lowest position means off (e.g. a partial's decay)
   let v = t.exponential ? t.min * (t.max / t.min) ** x : t.min + (t.max - t.min) * x;
   if (t.step > 0) v = Math.round(v / t.step) * t.step;
   return v;
@@ -451,11 +543,4 @@ export function describeMIDI(status, d1, d2) {
     case 0xd0: return `${ch} aftertouch ${d1}`;
     default: return [status, d1, d2].map((b) => b.toString(16).padStart(2, '0')).join(' ');
   }
-}
-
-/** Short label for a control's source, e.g. "cc 30", "ch10 note 36", "pitch bend". */
-export function describeSource(c) {
-  const ch = c.channel === null ? '' : `ch${c.channel + 1} `;
-  if (c.source.type === 'pitchBend') return `${ch}pitch bend`;
-  return `${ch}${c.source.type} ${c.source.number}`;
 }

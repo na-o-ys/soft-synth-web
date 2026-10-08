@@ -40,7 +40,8 @@ export class WebMIDIInput {
       input.onmidimessage = (e) => {
         if (this.isIgnored(input.name)) return;
         const status = e.data[0];
-        if (status < 0xf0 || status === 0xf0) this.onMessage(Array.from(e.data), input.name);
+        // channel messages, SysEx, and the transport realtime messages (Start / Continue / Stop; not the clock)
+        if (status <= 0xf0 || status === 0xfa || status === 0xfb || status === 0xfc) this.onMessage(Array.from(e.data), input.name);
       };
     }
     this.onDevicesChange();
@@ -49,6 +50,12 @@ export class WebMIDIInput {
   isIgnored(name) {
     for (const n of this.ignoredNames) if (name?.includes(n)) return true;
     return false;
+  }
+
+  /** The output whose name contains `part` (e.g. to light a Mackie surface's buttons), or null. */
+  output(part) {
+    if (!this.access || !part) return null;
+    return [...this.access.outputs.values()].find((o) => o.name?.includes(part) && o.state !== 'disconnected') ?? null;
   }
 
   get inputs() {
@@ -178,7 +185,11 @@ export function parseBLEMIDIPacket(data, emit, state = { sysex: null }) {
           running = 0;
           continue;
         }
-        if (status >= 0xf8) continue; // realtime message (no data)
+        if (status >= 0xf8) {
+          // realtime (no data): pass the transport ones (Start / Continue / Stop), not the clock
+          if (status === 0xfa || status === 0xfb || status === 0xfc) emit([status]);
+          continue;
+        }
         running = status;
       }
     }

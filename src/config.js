@@ -1,4 +1,5 @@
 // Config file (JSON) definitions and validation. See README.md for the format.
+import { COMMANDS } from './transport.js';
 
 export const PARAMS = [
   // oscillators and mixer
@@ -107,9 +108,9 @@ export const INIT_PARTIALS = [{ ratio: 1, level: 1, velocity: 0, decay: 0 }];
 export const MAX_PARTIALS = 8;
 export const MAX_SLOTS = 16;
 
-/** How many preset slots the config's controls use (the highest slot number), for the Play screen. */
+/** How many preset slots the Play screen uses: the highest "slot" assignment, or 8 with a Mackie surface (tracks 1-8). */
 export const slotCount = (config) =>
-  Math.max(0, ...config.controls.filter((c) => c.target.kind === 'slot').map((c) => c.target.slot));
+  Math.max(config.mackie ? 8 : 0, ...config.play.filter((c) => c.target.kind === 'slot').map((c) => c.target.slot));
 export const PARTIAL_FIELDS = ['ratio', 'level', 'velocity', 'decay'];
 
 export const DEFAULT_PARTIALS = [
@@ -124,6 +125,8 @@ export const DEFAULT_PARTIALS = [
  */
 export function presetSound(config, name) {
   const preset = config.presets.find((p) => p.name === name) ?? config.presets[0];
+  // an FM preset (see src/fm): its DX7 voice, plus the subtractive defaults so knobs have values to show
+  if (preset.engine === 'fm') return { engine: 'fm', voice: preset.voice, params: { ...DEFAULT_PARAMS, ...config.params, transpose: 0, bend: 0, modWheel: 0 } };
   return {
     params: { ...DEFAULT_PARAMS, ...config.params, ...preset.values, transpose: 0, bend: 0, modWheel: 0 },
     partials: preset.partials ?? DEFAULT_PARTIALS,
@@ -144,22 +147,20 @@ export function partialParam(name) {
 
 export const isParamName = (name) => PARAMS.includes(name) || partialParam(name) !== null;
 
-const paramControl = (param, min, max) =>
-  ({ kind: 'param', param, min, max, exponential: false, step: 0, pickup: false });
-
-/** Defaults used when no config is available (suits a generic MIDI keyboard). */
+/**
+ * Defaults used when no config is available. Pads and sliders do nothing until a config assigns them;
+ * the knobs always follow the Edit screen's page.
+ */
 export const BUILTIN = {
   params: {},
-  presets: [{ name: 'default', values: {}, partials: null }],
+  presets: [{ name: 'default', group: null, values: {}, partials: null }],
   initialPreset: null,
-  pages: [],
+  kits: [],
   logMIDI: false,
+  pickup: true,
   inputs: [],
-  controls: [
-    { source: { type: 'pitchBend' }, channel: null, page: null, target: paramControl('bend', -2, 2) },
-    { source: { type: 'cc', number: 1 }, channel: null, page: null, target: paramControl('modWheel', 0, 0.5) },
-    { source: { type: 'cc', number: 7 }, channel: null, page: null, target: paramControl('volume', 0, 1) },
-  ],
+  edit: [],
+  play: [],
 };
 
 class ConfigError extends Error {}
@@ -196,7 +197,8 @@ function parseValues(obj, path) {
 
 function parsePreset(d, path) {
   if (typeof d.name !== 'string') fail(`${path}.name: required`);
-  const { name, partials, ...rest } = d;
+  const { name, partials, group, ...rest } = d;
+  if (group !== undefined && typeof group !== 'string') fail(`${path}.group: must be a name, e.g. "drums"`);
   let parsed = null;
   if (partials !== undefined) {
     if (!Array.isArray(partials) || partials.length < 1 || partials.length > MAX_PARTIALS) {
@@ -213,24 +215,27 @@ function parsePreset(d, path) {
       };
     });
   }
-  return { name, values: parseValues(rest, path), partials: parsed };
+  return { name, group: group ?? null, values: parseValues(rest, path), partials: parsed };
 }
 
-function parseControl(d, path, pickupDefault) {
+/**
+ * One entry of "edit" / "play": what a virtual pad or slider of the controller surface does on that screen.
+ * Pads are "row-column" (1-based, "2-3"), sliders 1, 2, ...
+ */
+function parseAssignment(d, path) {
   if (!isObject(d)) fail(`${path}: must be an object`);
   let source;
-  if (d.cc !== undefined) source = { type: 'cc', number: number(d.cc, `${path}.cc`) };
-  else if (d.note !== undefined) source = { type: 'note', number: number(d.note, `${path}.note`) };
-  else if (d.pitchBend === true) source = { type: 'pitchBend' };
-  else fail(`${path}: needs one of "cc", "note", "pitchBend": true`);
-
-  let channel = null;
-  if (d.channel !== undefined) {
-    const n = number(d.channel, `${path}.channel`);
-    if (n < 1 || n > 16) fail(`${path}.channel: must be 1...16`);
-    channel = n - 1;
+  if (d.pad !== undefined) {
+    const m = typeof d.pad === 'string' ? /^(\d+)-(\d+)$/.exec(d.pad) : null;
+    if (!m || Number(m[1]) < 1 || Number(m[2]) < 1) fail(`${path}.pad: must be "row-column", e.g. "1-3"`);
+    source = { type: 'pad', row: Number(m[1]) - 1, col: Number(m[2]) - 1 };
+  } else if (d.slider !== undefined) {
+    const n = number(d.slider, `${path}.slider`);
+    if (!Number.isInteger(n) || n < 1) fail(`${path}.slider: must be 1, 2, ...`);
+    source = { type: 'slider', index: n - 1 };
+  } else {
+    fail(`${path}: needs "pad" ("row-column") or "slider" (number); knobs always follow the page`);
   }
-  if (d.page !== undefined && typeof d.page !== 'string') fail(`${path}.page: must be a page name`);
 
   let target;
   switch (d.action) {
@@ -240,12 +245,12 @@ function parseControl(d, path, pickupDefault) {
       const exponential = d.curve === 'exp';
       if (exponential && (lo <= 0 || hi <= 0)) fail(`${path}: curve "exp" needs min and max > 0`);
       if (d.pickup !== undefined && typeof d.pickup !== 'boolean') fail(`${path}.pickup: must be true or false`);
+      if (source.type === 'pad') fail(`${path}: a pad needs an "action" (a parameter needs a slider)`);
       target = {
         kind: 'param', param: param(d.param, `${path}.param`), min: lo, max: hi, exponential,
         step: number(d.step ?? 0, `${path}.step`),
-        // pickup is for continuous knobs and sliders: not for notes, and not for stepped values
-        // (wave shapes, voice counts), where scaling would round back to the same step
-        pickup: source.type !== 'note' && (d.pickup ?? (pickupDefault && !(d.step > 0))),
+        // soft takeover only when asked: strips and wheels usually spring back or are meant to jump
+        pickup: d.pickup === true && !(d.step > 0),
       };
       break;
     }
@@ -277,6 +282,7 @@ function parseControl(d, path, pickupDefault) {
     case 'play':
     case 'stop':
     case 'loop':
+    case 'undoNote':
       target = { kind: d.action };
       break;
     case 'set':
@@ -298,8 +304,7 @@ function parseControl(d, path, pickupDefault) {
     default:
       fail(`${path}.action: unknown action "${d.action}"`);
   }
-  const page = d.action === 'page' ? null : d.page ?? null;
-  return { source, channel, page, target };
+  return { source, target };
 }
 
 function channelNumber(v, path) {
@@ -335,7 +340,7 @@ function parseInputRule(d, path) {
 }
 
 /** Validates JSON text into a config object. Throws with a message that points at the problem. */
-export function parseConfig(text) {
+export function parseControllerSettings(text) {
   let root;
   try {
     root = JSON.parse(text);
@@ -344,49 +349,104 @@ export function parseConfig(text) {
   }
   if (!isObject(root)) fail('top level must be an object');
   if (root.pickup !== undefined && typeof root.pickup !== 'boolean') fail('pickup: must be true or false');
-  if (root.pages !== undefined && (!Array.isArray(root.pages) || !root.pages.every((p) => typeof p === 'string'))) {
-    fail('pages: must be an array of page names');
+  if (root.controls !== undefined || root.pages !== undefined) {
+    fail('"controls" and "pages" are gone: learn your controller on the Setup screen, then assign its pads and sliders in "edit" and "play"');
   }
-
-  const c = {
-    params: root.params !== undefined ? parseValues(root.params, 'params') : {},
-    presets: BUILTIN.presets,
-    initialPreset: typeof root.preset === 'string' ? root.preset : null,
-    pages: root.pages ?? [],
-    logMIDI: root.logMIDI === true,
-    inputs: [],
-    controls: BUILTIN.controls,
-  };
+  for (const key of ['presets', 'params', 'preset', 'performances', 'kits']) {
+    if (root[key] !== undefined) fail(`"${key}" belongs to the sound library, not the controller settings (build it on screen)`);
+  }
+  const c = { logMIDI: root.logMIDI === true, pickup: root.pickup ?? true, inputs: [], edit: [], play: [], mackie: null };
+  if (root.mackie !== undefined) c.mackie = parseMackie(root.mackie);
   if (root.inputs !== undefined) {
     if (!Array.isArray(root.inputs)) fail('inputs: must be an array of objects');
     c.inputs = root.inputs.map((d, i) => parseInputRule(d, `inputs[${i}]`));
   }
-  if (root.presets !== undefined) {
-    if (!Array.isArray(root.presets) || root.presets.length === 0) {
-      fail('presets: must be a non-empty array of objects');
-    }
-    c.presets = root.presets.map((p, i) => {
-      if (!isObject(p)) fail(`presets[${i}]: must be an object`);
-      return parsePreset(p, `presets[${i}]`);
-    });
+  for (const screen of ['edit', 'play']) {
+    if (root[screen] === undefined) continue;
+    if (!Array.isArray(root[screen])) fail(`${screen}: must be an array of objects`);
+    c[screen] = root[screen].map((d, i) => parseAssignment(d, `${screen}[${i}]`));
   }
-  if (root.controls !== undefined) {
-    if (!Array.isArray(root.controls)) fail('controls: must be an array of objects');
-    c.controls = root.controls.map((d, i) => parseControl(d, `controls[${i}]`, root.pickup === true));
-  }
-
-  const names = new Set(c.presets.map((p) => p.name));
-  if (c.initialPreset !== null && !names.has(c.initialPreset)) fail(`preset: unknown preset "${c.initialPreset}"`);
-  const pages = new Set(c.pages);
-  c.controls.forEach((ctl, i) => {
-    if (ctl.target.kind === 'preset' && !names.has(ctl.target.preset)) {
-      fail(`controls[${i}]: unknown preset "${ctl.target.preset}"`);
-    }
-    const page = ctl.target.kind === 'page' ? ctl.target.page : ctl.page;
-    if (page !== null && !pages.has(page)) fail(`controls[${i}]: page "${page}" is not listed in "pages"`);
-  });
   return c;
 }
+
+/**
+ * "mackie": the input that is a Mackie Control surface. port: part of its input name, or a list (the name may be
+ * localized, "Port 3" / "ポート3"); its output of the same name gets the LEDs; sysexNote: optional SysEx prefix a controller wraps the button notes in (e.g. over
+ * Bluetooth); buttons: optional { "note": command } overrides of the standard button map.
+ */
+function parseMackie(d) {
+  const ports = typeof d?.port === 'string' ? [d.port] : d?.port;
+  if (!isObject(d) || !Array.isArray(ports) || !ports.length || !ports.every((p) => typeof p === 'string' && p)) {
+    fail('mackie.port: required: part of the input name (e.g. "Port 3"), or a list of them');
+  }
+  const m = { ports, sysexNote: null, buttons: {} };
+  if (d.sysexNote !== undefined) {
+    const bytes = typeof d.sysexNote === 'string' ? d.sysexNote.trim().split(/\s+/).map((h) => parseInt(h, 16)) : [];
+    if (!bytes.length || bytes[0] !== 0xf0 || bytes.some((b) => !(b >= 0 && b <= 0xff))) fail('mackie.sysexNote: must be hex bytes starting with F0');
+    m.sysexNote = bytes;
+  }
+  if (d.buttons !== undefined) {
+    if (!isObject(d.buttons)) fail('mackie.buttons: must be an object of note → command');
+    for (const [note, cmd] of Object.entries(d.buttons)) {
+      const n = Number(note);
+      if (!Number.isInteger(n) || n < 0 || n > 127) fail(`mackie.buttons: "${note}" is not a note number`);
+      if (!COMMANDS.includes(cmd)) fail(`mackie.buttons.${note}: must be one of ${COMMANDS.join(', ')}`);
+      m.buttons[n] = cmd;
+    }
+  }
+  return m;
+}
+
+/**
+ * Validates the sound library (plain JSON: { params, preset, presets, kits }) into
+ * { params, initialPreset, presets, kits }. A kit is a pad layout: { name, cols, rows, items: [{ preset, note, volume }] }.
+ */
+export function parseLibrary(root) {
+  if (!isObject(root)) fail('library: must be an object');
+  const lib = {
+    params: root.params !== undefined ? parseValues(root.params, 'params') : {},
+    initialPreset: typeof root.preset === 'string' ? root.preset : null,
+    presets: BUILTIN.presets,
+    kits: [],
+  };
+  if (root.presets !== undefined) {
+    if (!Array.isArray(root.presets) || root.presets.length === 0) fail('presets: must be a non-empty array of objects');
+    // FM presets ("engine": "fm") belong to the FM page (src/fm), which reads them from the raw library
+    lib.presets = root.presets.map((p, i) => {
+      if (!isObject(p)) fail(`presets[${i}]: must be an object`);
+      return p.engine === 'fm' ? null : parsePreset(p, `presets[${i}]`);
+    }).filter(Boolean);
+    if (!lib.presets.length) lib.presets = BUILTIN.presets;
+  }
+  const names = new Set(lib.presets.map((p) => p.name));
+  if (lib.initialPreset !== null && !names.has(lib.initialPreset)) lib.initialPreset = null;
+  if (root.kits !== undefined) {
+    if (!Array.isArray(root.kits)) fail('kits: must be an array of objects');
+    lib.kits = root.kits.map((k, i) => parseKit(k, `kits[${i}]`, names));
+  }
+  return lib;
+}
+
+function parseKit(k, path, names) {
+  if (!isObject(k) || typeof k.name !== 'string') fail(`${path}.name: required`);
+  const size = (v, what) => {
+    const n = number(v, `${path}.${what}`);
+    if (!Number.isInteger(n) || n < 1 || n > 8) fail(`${path}.${what}: must be 1...8`);
+    return n;
+  };
+  const cols = size(k.cols, 'cols'), rows = size(k.rows, 'rows');
+  if (!Array.isArray(k.items)) fail(`${path}.items: must be an array`);
+  const items = Array.from({ length: cols * rows }, (_, i) => {
+    const it = k.items[i] ?? {};
+    // a kit may name a preset the library no longer has: that pad stays empty
+    const preset = typeof it.preset === 'string' && names.has(it.preset) ? it.preset : null;
+    return { preset, note: Math.min(Math.max(Math.round(it.note ?? 60), 0), 127), volume: Math.min(Math.max(it.volume ?? 1, 0), 1) };
+  });
+  return { name: k.name, cols, rows, items };
+}
+
+/** The config the screens run on: the library and the controller settings side by side. */
+export const combine = (library, settings) => ({ ...library, ...settings });
 
 /**
  * Formats a config object as JSON, keeping small objects (controls, partials, value maps)

@@ -14,7 +14,10 @@
       <div class="brand">SOFT<span>SYNTH</span></div>
       <button id="start" class="power" type="button"><span class="led" id="audio-led"></span><span id="start-label">Start</span></button>
       <span id="audio-status" class="strip-note">audio off</span>
-      <button id="mode-toggle" class="mode-toggle" type="button" title="Switch between editing sounds and playing them">Play</button>
+      <button id="mode-edit" class="mode-toggle" type="button" title="The subtractive synth: oscillators, filter, envelopes">Analog</button>
+      <button id="mode-fm" class="mode-toggle" type="button" title="The 6-operator FM synth (DX7 style), with .syx import">FM</button>
+      <button id="mode-toggle" class="mode-toggle" type="button" title="Play several sounds at once on keys, pads, and knobs">Play</button>
+      <button id="controller-toggle" class="mode-toggle" type="button" title="Setup: MIDI inputs, learning your controller (its knobs, pads, and sliders become the virtual controls the other screens use), controller settings, the sound library, and the log">Setup</button>
 
       <div class="program edit-only">
         <button id="preset-prev" type="button" aria-label="Previous preset">◀</button>
@@ -29,13 +32,39 @@
         <button id="undo" type="button" title="Undo the last change (⌘Z / Ctrl+Z)">Undo</button>
       </div>
 
-      <div class="pages edit-only" id="pages-box" hidden>
+      <div class="pages edit-only" id="pages-box">
         <span class="strip-note">knobs</span>
         <div id="pages" class="switch"></div>
       </div>
 
+      <div class="program fm-only">
+        <button id="fm-preset-prev" type="button" aria-label="Previous FM preset">◀</button>
+        <div class="lcd program-lcd">
+          <span id="fm-preset-number" class="lcd-dim"></span>
+          <select id="fm-preset-select" aria-label="FM preset"></select>
+        </div>
+        <button id="fm-preset-next" type="button" aria-label="Next FM preset">▶</button>
+        <button id="fm-new" type="button" title="Start from INIT VOICE: one sine, nothing else. Nothing is saved until you Write.">New</button>
+        <button id="fm-save" type="button" title="Save the current FM voice: keep the name to overwrite, or enter a new name to save a copy">Write</button>
+        <button id="fm-revert" type="button" title="Throw away edits and reload this voice">Revert</button>
+        <button id="fm-undo" type="button" title="Undo the last change (⌘Z / Ctrl+Z)">Undo</button>
+        <label class="button-like" title="Open a DX7 .syx file (32-voice bank or single voice) to audition and import its voices">.syx<input id="fm-syx" type="file" accept=".syx,.SYX,application/octet-stream" hidden></label>
+        <button id="fm-export" type="button" title="Save the library's FM voices (up to 32) as a DX7 bank .syx">Export</button>
+      </div>
+
+      <div class="pages fm-only" id="fm-pages-box">
+        <span class="strip-note">knobs</span>
+        <div id="fm-pages" class="switch"></div>
+      </div>
+
+      <button id="fm-lessons-toggle" class="lessons-toggle fm-only" type="button" title="Hands-on FM sound design lessons">Lessons</button>
       <button id="lessons-toggle" class="lessons-toggle edit-only" type="button" title="Hands-on sound design lessons">Lessons</button>
       <span class="led midi-led" id="midi-led" title="MIDI in"></span>
+      <label class="master" title="Master volume: everything the app plays (Analog, FM, Play). Double-click: back to 100 %">
+        <span class="strip-note">master</span>
+        <input id="master" type="range" min="0" max="100" step="1" value="100" aria-label="Master volume">
+        <output id="master-value" class="strip-note">100</output>
+      </label>
       <button id="panic" type="button" title="Stop every sounding note">Panic</button>
     </header>
 
@@ -50,6 +79,18 @@
 
     <!-- the Play screen: several sounds at once on keys, pads, and knobs -->
     <div class="play" id="play"></div>
+    <!-- the Setup screen: MIDI inputs first, then the controller surface; the rest of Setup follows the panel -->
+    <section class="module setup-devices controller-only" id="devices">
+      <h3>MIDI INPUT</h3>
+      <ul id="midi-inputs" class="list"><li class="muted">Press “Start” to look for MIDI keyboards</li></ul>
+      <div class="row">
+        <button id="ble-connect" type="button">Connect Bluetooth MIDI keyboard</button>
+        <span id="ble-status" class="muted"></span>
+      </div>
+    </section>
+    <div class="surface" id="surface"></div>
+    <!-- the FM page: algorithm, voice-wide sections, six operators -->
+    <div class="fm fm-only" id="fm"></div>
 
     <!-- modules in signal order -->
     <div class="modules edit-only" id="row-1"></div>
@@ -74,30 +115,20 @@
     </div>
   </div>
 
-  <details class="setup">
-    <summary>Setup · MIDI, config, log</summary>
+  <div class="setup controller-only" id="setup">
     <main>
-      <section class="card" id="devices">
-        <h2>MIDI input</h2>
-        <ul id="midi-inputs" class="list"><li class="muted">Press “Start” to look for MIDI keyboards</li></ul>
-        <div class="row">
-          <button id="ble-connect" type="button">Connect Bluetooth MIDI keyboard</button>
-          <span id="ble-status" class="muted"></span>
-        </div>
-      </section>
-
       <section class="card" id="mapping-card">
-        <h2>Hardware knobs on this page</h2>
-        <ul id="page-controls" class="mapping"><li class="muted">This config has no knob pages.</li></ul>
+        <h2>Controller knobs on this page</h2>
+        <ul id="page-controls" class="mapping"></ul>
       </section>
 
       <section class="card wide" id="config-card">
-        <h2>Config (JSON)</h2>
+        <h2>Controller settings (JSON)</h2>
         <div class="row">
           <label>Template
             <select id="config-template">
-              <option value="configs/default.json">Generic MIDI keyboard</option>
-              <option value="configs/smk25ii.json">M-VAVE SMK-25 II</option>
+              <option value="configs/controller/default.json">Generic MIDI keyboard</option>
+              <option value="configs/controller/smk25ii.json">M-VAVE SMK-25 II</option>
             </select>
           </label>
           <button id="config-load" type="button">Load template</button>
@@ -105,7 +136,16 @@
         </div>
         <textarea id="config-text" spellcheck="false" rows="18"></textarea>
         <p id="config-error" class="error" hidden></p>
-        <p class="hint">Same format as the native soft-synth, plus knob pages, pickup, and the synth parameters. Saved in this browser.</p>
+        <p class="hint">What your controller's pads and sliders do on each screen, and how incoming MIDI is rewritten. Sounds, kits, and performances are kept apart (below and on screen). Saved in this browser.</p>
+      </section>
+
+      <section class="card" id="library-card">
+        <h2>Sound library</h2>
+        <p class="hint">Presets (Write) and drum kits (Save as kit on the Play screen) are kept here, apart from the controller settings.</p>
+        <div class="row">
+          <button id="library-export" type="button">Export library</button>
+          <label class="button-like">Import library <input id="library-import" type="file" accept="application/json,.json" hidden></label>
+        </div>
       </section>
 
       <section class="card wide">
@@ -116,6 +156,6 @@
         <pre id="log" class="log"></pre>
       </section>
     </main>
-  </details>
+  </div>
 </body>
 </html>

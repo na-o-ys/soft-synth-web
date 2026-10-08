@@ -1,0 +1,213 @@
+{
+  "version": 2,
+  "preset": "soft-piano",
+  "params": {"volume": 0.8},
+  "presets": [
+    {"name": "soft-piano"},
+    {
+      "name": "e-piano",
+      "attack": 0.004,
+      "decay": 2.2,
+      "sustain": 0.15,
+      "release": 0.35,
+      "chorus": 0.6,
+      "detune": 5,
+      "partials": [
+        {"ratio": 1, "level": 1},
+        {"ratio": 2, "level": 0.05, "velocity": 0.3, "decay": 0.4},
+        {"ratio": 3, "velocity": 0.1, "decay": 0.15},
+        {"ratio": 7, "velocity": 0.06, "decay": 0.05}
+      ]
+    },
+    {
+      "name": "warm-pad",
+      "attack": 0.35,
+      "decay": 3,
+      "sustain": 0.85,
+      "release": 1.2,
+      "chorus": 0.9,
+      "detune": 8,
+      "reverb": 0.35,
+      "reverbSize": 0.88,
+      "velocity": 0.4,
+      "partials": [
+        {"ratio": 1, "level": 1},
+        {"ratio": 2, "level": 0.2},
+        {"ratio": 3, "level": 0.06}
+      ]
+    },
+    {
+      "name": "music-box",
+      "attack": 0.002,
+      "decay": 0.8,
+      "sustain": 0,
+      "release": 0.5,
+      "chorus": 0.15,
+      "reverb": 0.3,
+      "partials": [
+        {"ratio": 1, "level": 1, "decay": 1.5},
+        {"ratio": 2.76, "level": 0.15, "velocity": 0.1, "decay": 0.3},
+        {"ratio": 5.4, "level": 0.04, "velocity": 0.05, "decay": 0.12}
+      ]
+    },
+    {
+      "name": "organ",
+      "attack": 0.015,
+      "decay": 1,
+      "sustain": 1,
+      "release": 0.08,
+      "chorus": 0.4,
+      "detune": 3,
+      "velocity": 0.2,
+      "partials": [
+        {"ratio": 0.5, "level": 0.3},
+        {"ratio": 1, "level": 1},
+        {"ratio": 2, "level": 0.5},
+        {"ratio": 3, "level": 0.2},
+        {"ratio": 4, "level": 0.12}
+      ]
+    },
+    {
+      "name": "strings",
+      "attack": 0.25,
+      "decay": 2,
+      "sustain": 0.9,
+      "release": 0.6,
+      "chorus": 0.8,
+      "detune": 10,
+      "vibrato": 0.08,
+      "vibratoRate": 5.5,
+      "reverb": 0.3,
+      "velocity": 0.5,
+      "partials": [
+        {"ratio": 1, "level": 1},
+        {"ratio": 2, "level": 0.3},
+        {"ratio": 3, "level": 0.15},
+        {"ratio": 4, "level": 0.08},
+        {"ratio": 5, "level": 0.05}
+      ]
+    },
+    {
+      "name": "glass",
+      "attack": 0.003,
+      "decay": 2.5,
+      "sustain": 0,
+      "release": 1,
+      "chorus": 0.3,
+      "reverb": 0.35,
+      "reverbSize": 0.88,
+      "partials": [
+        {"ratio": 1, "level": 1, "decay": 3},
+        {"ratio": 2, "level": 0.3, "decay": 1},
+        {"ratio": 3, "level": 0.1, "decay": 0.6},
+        {"ratio": 4.2, "level": 0.06, "velocity": 0.04, "decay": 0.3}
+      ]
+    },
+    {"name": "analog-pad", "osc1Wave": "saw", "osc2Wave": "saw", "osc2Level": 1, "osc2Detune": 8, "chorus": 0, "cutoff": 900, "resonance": 0.15, "keyTrack": 0.5, "filterEnv": 1.5, "fAttack": 0.8, "fDecay": 2, "fSustain": 0.5, "fRelease": 1.2, "attack": 0.5, "decay": 3, "sustain": 0.85, "release": 1.5, "velocity": 0.4, "vibratoRate": 0.4, "lfoFilter": 0.3, "reverb": 0.35, "reverbSize": 0.88},
+    {"name": "synth-brass", "osc1Wave": "saw", "osc2Wave": "saw", "osc2Level": 0.8, "osc2Detune": 6, "chorus": 0, "cutoff": 350, "resonance": 0.1, "keyTrack": 0.6, "filterEnv": 3.5, "fAttack": 0.06, "fDecay": 0.7, "fSustain": 0.45, "fRelease": 0.3, "attack": 0.03, "decay": 1.5, "sustain": 0.8, "release": 0.25, "velocity": 0.6, "velFilter": 1.5},
+    {"name": "soft-bass", "osc1Wave": "triangle", "osc2Wave": "square", "osc2Level": 0.5, "osc2Octave": -1, "chorus": 0, "cutoff": 500, "resonance": 0.2, "keyTrack": 0.3, "filterEnv": 2, "fAttack": 0.003, "fDecay": 0.25, "fSustain": 0.2, "fRelease": 0.2, "attack": 0.005, "decay": 0.8, "sustain": 0.7, "release": 0.15, "reverb": 0.1, "velFilter": 1},
+    {"name": "pluck", "osc1Wave": "saw", "osc2Wave": "pulse", "osc2Level": 0.5, "pulseWidth": 0.3, "chorus": 0.2, "cutoff": 250, "resonance": 0.3, "keyTrack": 0.8, "filterEnv": 5, "fAttack": 0.001, "fDecay": 0.18, "fSustain": 0, "fRelease": 0.15, "attack": 0.002, "decay": 0.5, "sustain": 0, "release": 0.3, "reverb": 0.3, "velFilter": 1.2, "delay": 0.3, "delayTime": 0.375, "delayFeedback": 0.4},
+    {"name": "mono-lead", "mono": "mono", "glide": 0.08, "osc1Wave": "saw", "osc2Wave": "square", "osc2Level": 0.5, "osc2Detune": 7, "chorus": 0, "cutoff": 700, "resonance": 0.25, "keyTrack": 0.5, "velFilter": 1.5, "filterEnv": 2.5, "fAttack": 0.01, "fDecay": 0.4, "fSustain": 0.4, "attack": 0.005, "decay": 1, "sustain": 0.9, "release": 0.15, "vibratoRate": 5.5, "delay": 0.25, "delayTime": 0.3, "delayFeedback": 0.3, "reverb": 0.2},
+    {"name": "super-pad", "osc1Wave": "saw", "osc2Wave": "saw", "osc2Level": 0.7, "osc2Octave": 1, "unison": 5, "unisonDetune": 25, "unisonWidth": 0.9, "chorus": 0, "cutoff": 1500, "resonance": 0.1, "keyTrack": 0.4, "filterEnv": 1, "fAttack": 1, "fDecay": 2, "fSustain": 0.6, "fRelease": 1.5, "attack": 0.6, "decay": 3, "sustain": 0.9, "release": 2, "velocity": 0.3, "delay": 0.2, "delayTime": 0.45, "delayFeedback": 0.4, "reverb": 0.4, "reverbSize": 0.9},
+    {"name": "pwm-strings", "osc1Wave": "pulse", "osc2Wave": "pulse", "osc2Level": 0.8, "osc2Detune": 5, "pulseWidth": 0.5, "lfoWave": "triangle", "vibratoRate": 0.7, "lfoPwm": 0.35, "chorus": 0, "cutoff": 2500, "keyTrack": 0.5, "velFilter": 1, "attack": 0.35, "decay": 2, "sustain": 0.85, "release": 0.8, "velocity": 0.5, "reverb": 0.35},
+    {"name": "kick", "group": "drums", "osc1Level": 1, "osc2Level": 0, "chorus": 0, "attack": 0.001, "sustain": 0, "delay": 0, "osc1Wave": "sine", "pitchEnv": 30, "pitchDecay": 0.035, "decay": 0.18, "release": 0.12, "velocity": 0.7, "reverb": 0.05},
+    {"name": "snare", "group": "drums", "osc1Level": 0.6, "osc2Level": 0, "chorus": 0, "attack": 0.001, "sustain": 0, "delay": 0, "osc1Wave": "triangle", "noise": 0.7, "pitchEnv": 12, "pitchDecay": 0.02, "decay": 0.09, "release": 0.08, "cutoff": 9000, "velocity": 0.7, "reverb": 0.12},
+    {"name": "clap", "group": "drums", "osc1Level": 0, "osc2Level": 0, "chorus": 0, "attack": 0.004, "sustain": 0, "delay": 0, "noise": 1, "filterType": "high-pass", "cutoff": 900, "resonance": 0.25, "decay": 0.1, "release": 0.1, "velocity": 0.6, "reverb": 0.25},
+    {"name": "hat closed", "group": "drums", "osc1Level": 0, "osc2Level": 0, "chorus": 0, "attack": 0.001, "sustain": 0, "delay": 0, "noise": 0.8, "filterType": "high-pass", "cutoff": 7000, "resonance": 0.2, "decay": 0.035, "release": 0.03, "velocity": 0.6, "reverb": 0.08},
+    {"name": "hat open", "group": "drums", "osc1Level": 0, "osc2Level": 0, "chorus": 0, "attack": 0.001, "sustain": 0, "delay": 0, "noise": 0.8, "filterType": "high-pass", "cutoff": 7000, "resonance": 0.2, "decay": 0.25, "release": 0.15, "velocity": 0.6, "reverb": 0.1},
+    {"name": "crash", "group": "drums", "osc1Level": 0, "osc2Level": 0, "chorus": 0, "attack": 0.001, "sustain": 0, "delay": 0, "noise": 0.8, "filterType": "high-pass", "cutoff": 4500, "resonance": 0.1, "decay": 0.9, "release": 0.6, "velocity": 0.6, "reverb": 0.3},
+    {"name": "rim", "group": "drums", "osc1Level": 1, "osc2Level": 0, "chorus": 0, "attack": 0.001, "sustain": 0, "delay": 0, "osc1Wave": "triangle", "noise": 0.7, "filterType": "low-pass", "cutoff": 5000, "resonance": 0.2, "decay": 0.03, "release": 0.02, "velocity": 0.6, "reverb": 0.1},
+    {"name": "tom", "group": "drums", "osc1Level": 1, "osc2Level": 0, "chorus": 0, "attack": 0.001, "sustain": 0, "delay": 0, "osc1Wave": "sine", "noise": 0.08, "pitchEnv": 7, "pitchDecay": 0.06, "decay": 0.28, "release": 0.2, "velocity": 0.7, "reverb": 0.12},
+    {"name": "cowbell", "group": "drums", "osc1Level": 1, "osc2Level": 1, "chorus": 0, "attack": 0.001, "sustain": 0, "delay": 0, "osc1Wave": "square", "osc2Wave": "square", "osc2Semi": 7, "filterType": "band-pass", "cutoff": 1100, "resonance": 0.25, "decay": 0.12, "release": 0.1, "velocity": 0.6, "reverb": 0.1},
+    {"name": "zap", "group": "drums", "osc1Level": 1, "osc2Level": 0, "chorus": 0, "attack": 0.001, "sustain": 0, "delay": 0.2, "osc1Wave": "saw", "pitchEnv": 36, "pitchDecay": 0.05, "cutoff": 3000, "resonance": 0.5, "decay": 0.15, "release": 0.1, "velocity": 0.6, "reverb": 0.1},
+    {"name": "FM e-piano", "engine": "fm", "fm": {"name": "E.PIANO", "algorithm": 5, "feedback": 6, "ops": [
+      {"coarse": 1, "level": 99, "r1": 96, "r2": 25, "r3": 25, "r4": 67, "l1": 99, "l2": 75, "l3": 0, "l4": 0, "velocity": 2, "detune": 3, "rateScale": 3},
+      {"coarse": 14, "level": 58, "r1": 95, "r2": 50, "r3": 35, "r4": 78, "l1": 99, "l2": 75, "l3": 0, "l4": 0, "velocity": 7, "rateScale": 3, "breakPoint": 41, "rightDepth": 20, "rightCurve": 0},
+      {"coarse": 1, "level": 99, "r1": 95, "r2": 20, "r3": 20, "r4": 50, "l1": 99, "l2": 95, "l3": 0, "l4": 0, "velocity": 2, "rateScale": 3},
+      {"coarse": 1, "level": 80, "r1": 95, "r2": 29, "r3": 20, "r4": 50, "l1": 99, "l2": 95, "l3": 0, "l4": 0, "velocity": 6, "rateScale": 3, "breakPoint": 41, "rightDepth": 40, "rightCurve": 0},
+      {"coarse": 1, "level": 88, "r1": 95, "r2": 20, "r3": 20, "r4": 50, "l1": 99, "l2": 95, "l3": 0, "l4": 0, "velocity": 2, "detune": -3, "rateScale": 3},
+      {"coarse": 1, "level": 70, "r1": 95, "r2": 29, "r3": 20, "r4": 50, "l1": 99, "l2": 95, "l3": 0, "l4": 0, "velocity": 6, "rateScale": 3}
+    ]}},
+    {"name": "FM bass", "engine": "fm", "fm": {"name": "BASS", "algorithm": 2, "feedback": 5, "ops": [
+      {"coarse": 0, "level": 99, "r1": 99, "r2": 40, "r3": 30, "r4": 80, "l1": 99, "l2": 80, "l3": 60, "l4": 0, "velocity": 2, "rateScale": 2},
+      {"coarse": 0, "level": 82, "r1": 99, "r2": 55, "r3": 30, "r4": 80, "l1": 99, "l2": 60, "l3": 40, "l4": 0, "velocity": 4, "rateScale": 2},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0}
+    ]}},
+    {"name": "FM bell", "engine": "fm", "fm": {"name": "BELL", "algorithm": 5, "feedback": 0, "ops": [
+      {"coarse": 1, "level": 99, "r1": 99, "r2": 30, "r3": 20, "r4": 30, "l1": 99, "l2": 50, "l3": 0, "l4": 0, "velocity": 3},
+      {"coarse": 3, "level": 75, "r1": 99, "r2": 30, "r3": 20, "r4": 30, "l1": 99, "l2": 50, "l3": 0, "l4": 0, "fine": 50, "velocity": 3},
+      {"coarse": 2, "level": 80, "r1": 99, "r2": 26, "r3": 20, "r4": 30, "l1": 99, "l2": 40, "l3": 0, "l4": 0, "velocity": 3},
+      {"coarse": 5, "level": 70, "r1": 99, "r2": 40, "r3": 20, "r4": 30, "l1": 99, "l2": 30, "l3": 0, "l4": 0, "fine": 41},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0}
+    ]}},
+    {"name": "FM brass", "engine": "fm", "fm": {"name": "BRASS", "algorithm": 5, "feedback": 0, "pr1": 80, "pr2": 99, "pr3": 99, "pr4": 99, "pl1": 50, "pl2": 50, "pl3": 50, "pl4": 47, "lfoSpeed": 33, "lfoDelay": 50, "lfoPmd": 4, "lfoPms": 3, "ops": [
+      {"coarse": 1, "level": 99, "r1": 72, "r2": 76, "r3": 99, "r4": 71, "l1": 99, "l2": 88, "l3": 96, "l4": 0, "velocity": 1},
+      {"coarse": 1, "level": 86, "r1": 62, "r2": 51, "r3": 29, "r4": 71, "l1": 82, "l2": 95, "l3": 96, "l4": 0, "velocity": 4},
+      {"coarse": 1, "level": 95, "r1": 72, "r2": 76, "r3": 99, "r4": 71, "l1": 99, "l2": 88, "l3": 96, "l4": 0, "velocity": 1, "detune": 4},
+      {"coarse": 1, "level": 80, "r1": 62, "r2": 51, "r3": 29, "r4": 71, "l1": 82, "l2": 95, "l3": 96, "l4": 0, "velocity": 4},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0}
+    ]}},
+    {"name": "FM organ", "engine": "fm", "fm": {"name": "ORGAN", "algorithm": 32, "feedback": 2, "lfoSpeed": 34, "lfoPmd": 4, "lfoPms": 2, "ops": [
+      {"coarse": 0, "level": 88, "r1": 99, "r2": 99, "r3": 99, "r4": 90, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 1, "level": 99, "r1": 99, "r2": 99, "r3": 99, "r4": 90, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 2, "level": 86, "r1": 99, "r2": 99, "r3": 99, "r4": 90, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 3, "level": 80, "r1": 99, "r2": 99, "r3": 99, "r4": 90, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 4, "level": 76, "r1": 99, "r2": 99, "r3": 99, "r4": 90, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 8, "level": 70, "r1": 99, "r2": 70, "r3": 99, "r4": 90, "l1": 99, "l2": 0, "l3": 0, "l4": 0}
+    ]}},
+    {"name": "FM marimba", "engine": "fm", "fm": {"name": "MARIMBA", "algorithm": 5, "feedback": 0, "ops": [
+      {"coarse": 1, "level": 99, "r1": 99, "r2": 45, "r3": 30, "r4": 60, "l1": 99, "l2": 0, "l3": 0, "l4": 0, "velocity": 3, "rateScale": 3},
+      {"coarse": 4, "level": 72, "r1": 99, "r2": 70, "r3": 40, "r4": 60, "l1": 99, "l2": 0, "l3": 0, "l4": 0, "velocity": 5, "rateScale": 3},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0}
+    ]}},
+    {"name": "FM strings", "engine": "fm", "fm": {"name": "STRINGS", "algorithm": 5, "feedback": 0, "lfoSpeed": 30, "lfoDelay": 40, "lfoPmd": 6, "lfoPms": 3, "ops": [
+      {"coarse": 1, "level": 97, "r1": 45, "r2": 30, "r3": 20, "r4": 40, "l1": 99, "l2": 90, "l3": 85, "l4": 0},
+      {"coarse": 1, "level": 76, "r1": 45, "r2": 30, "r3": 20, "r4": 40, "l1": 99, "l2": 90, "l3": 85, "l4": 0, "velocity": 2},
+      {"coarse": 1, "level": 97, "r1": 45, "r2": 30, "r3": 20, "r4": 40, "l1": 99, "l2": 90, "l3": 85, "l4": 0, "detune": 5},
+      {"coarse": 1, "level": 74, "r1": 45, "r2": 30, "r3": 20, "r4": 40, "l1": 99, "l2": 90, "l3": 85, "l4": 0, "velocity": 2},
+      {"coarse": 1, "level": 92, "r1": 45, "r2": 30, "r3": 20, "r4": 40, "l1": 99, "l2": 90, "l3": 85, "l4": 0, "detune": -5},
+      {"coarse": 2, "level": 60, "r1": 45, "r2": 30, "r3": 20, "r4": 40, "l1": 99, "l2": 90, "l3": 85, "l4": 0}
+    ]}},
+    {"name": "FM clav", "engine": "fm", "fm": {"name": "CLAV", "algorithm": 5, "feedback": 0, "ops": [
+      {"coarse": 1, "level": 99, "r1": 99, "r2": 60, "r3": 30, "r4": 80, "l1": 99, "l2": 70, "l3": 50, "l4": 0, "velocity": 2, "rateScale": 3},
+      {"coarse": 3, "level": 85, "r1": 99, "r2": 75, "r3": 50, "r4": 80, "l1": 99, "l2": 40, "l3": 0, "l4": 0, "velocity": 6, "rateScale": 3},
+      {"coarse": 1, "level": 72, "r1": 99, "r2": 60, "r3": 40, "r4": 80, "l1": 99, "l2": 60, "l3": 0, "l4": 0, "velocity": 2},
+      {"coarse": 7, "level": 70, "r1": 99, "r2": 85, "r3": 60, "r4": 80, "l1": 99, "l2": 20, "l3": 0, "l4": 0, "velocity": 6},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0},
+      {"coarse": 1, "level": 0, "r1": 99, "r2": 99, "r3": 99, "r4": 99, "l1": 99, "l2": 99, "l3": 99, "l4": 0}
+    ]}}
+  ],
+  "kits": [
+    {
+      "name": "synth kit",
+      "cols": 8,
+      "rows": 2,
+      "items": [
+        {"preset": "hat closed", "note": 60, "volume": 1},
+        {"preset": "hat open", "note": 60, "volume": 1},
+        {"preset": "crash", "note": 60, "volume": 1},
+        {"preset": "rim", "note": 72, "volume": 1},
+        {"preset": "tom", "note": 43, "volume": 1},
+        {"preset": "tom", "note": 48, "volume": 1},
+        {"preset": "tom", "note": 53, "volume": 1},
+        {"preset": "cowbell", "note": 73, "volume": 1},
+        {"preset": "kick", "note": 36, "volume": 1},
+        {"preset": "snare", "note": 55, "volume": 1},
+        {"preset": "clap", "note": 60, "volume": 1},
+        {"preset": "hat closed", "note": 60, "volume": 0.6},
+        {"preset": "kick", "note": 31, "volume": 1},
+        {"preset": "snare", "note": 62, "volume": 1},
+        {"preset": "zap", "note": 48, "volume": 1},
+        {"preset": "zap", "note": 60, "volume": 1}
+      ]
+    }
+  ]
+}
